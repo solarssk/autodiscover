@@ -84,6 +84,7 @@ Use labels to classify issues and PRs:
 | `documentation` | Docs only |
 | `security` | Security hardening or vulnerability |
 | `testing` | Tests and coverage |
+| `chore` | Maintenance with no behavior change (refactor, cleanup, tooling) |
 | `ci/cd` | CI, releases, GHCR |
 | `dependencies` | Dependency updates (often Dependabot) |
 | `outlook` | Outlook Autodiscover |

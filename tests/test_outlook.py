@@ -86,6 +86,17 @@ def test_outlook_missing_email_address(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_outlook_invalid_email_format(client: TestClient) -> None:
+    body = OUTLOOK_REQUEST_TEMPLATE.format(email="not-an-email")
+    response = client.post(
+        "/autodiscover/autodiscover.xml",
+        content=body,
+        headers={"Content-Type": "text/xml"},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid request"}
+
+
 def test_outlook_body_too_large() -> None:
     reset_rate_limit_store()
     settings = make_settings(max_request_body_bytes=100)

@@ -13,8 +13,8 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator, model_vali
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _MAX_REQUEST_BODY_BYTES = 1_048_576
-_PLACEHOLDER_IMAP_HOST = "mail.example.com"
-_PLACEHOLDER_SMTP_HOST = "mail.example.com"
+_PLACEHOLDER_MAIL_HOST = "mail.example.com"
+_PLACEHOLDER_DOMAIN = "example.com"
 
 
 class UsernameFormat(StrEnum):
@@ -112,17 +112,17 @@ class Settings(BaseSettings):
     public_base_url: str = Field(default="http://localhost:8000", alias="PUBLIC_BASE_URL")
     config_file: str = Field(default="/config/config.yaml", alias="CONFIG_FILE")
 
-    allowed_domains: str = Field(default="example.com", alias="ALLOWED_DOMAINS")
+    allowed_domains: str = Field(default=_PLACEHOLDER_DOMAIN, alias="ALLOWED_DOMAINS")
 
     mail_display_name: str = Field(default="Example Mail", alias="MAIL_DISPLAY_NAME")
     mail_display_short_name: str = Field(default="Example", alias="MAIL_DISPLAY_SHORT_NAME")
 
-    imap_host: str = Field(default="mail.example.com", alias="IMAP_HOST")
+    imap_host: str = Field(default=_PLACEHOLDER_MAIL_HOST, alias="IMAP_HOST")
     imap_port: int = Field(default=993, alias="IMAP_PORT")
     imap_socket_type: SocketType = Field(default=SocketType.SSL, alias="IMAP_SOCKET_TYPE")
     imap_authentication: str = Field(default="password-cleartext", alias="IMAP_AUTHENTICATION")
 
-    smtp_host: str = Field(default="mail.example.com", alias="SMTP_HOST")
+    smtp_host: str = Field(default=_PLACEHOLDER_MAIL_HOST, alias="SMTP_HOST")
     smtp_port: int = Field(default=587, alias="SMTP_PORT")
     smtp_socket_type: SocketType = Field(default=SocketType.STARTTLS, alias="SMTP_SOCKET_TYPE")
     smtp_authentication: str = Field(default="password-cleartext", alias="SMTP_AUTHENTICATION")
@@ -148,7 +148,7 @@ class Settings(BaseSettings):
     )
 
     pop3_enabled: bool = Field(default=False, alias="POP3_ENABLED")
-    pop3_host: str = Field(default="mail.example.com", alias="POP3_HOST")
+    pop3_host: str = Field(default=_PLACEHOLDER_MAIL_HOST, alias="POP3_HOST")
     pop3_port: int = Field(default=995, alias="POP3_PORT")
     pop3_socket_type: SocketType = Field(default=SocketType.SSL, alias="POP3_SOCKET_TYPE")
     pop3_authentication: str = Field(default="password-cleartext", alias="POP3_AUTHENTICATION")
@@ -276,33 +276,42 @@ class Settings(BaseSettings):
     def _shared_validation_errors(self) -> list[str]:
         """Return validation errors shared by env and YAML modes."""
         errors: list[str] = []
-
         if self.app_env.lower() == "production":
-            if self.trust_proxy_headers and self.trusted_proxy_ips.strip():
-                for part in self.trusted_proxy_ips.split(","):
-                    token = part.strip()
-                    if not token:
-                        continue
-                    if self._parse_trusted_proxy_token(token) is None:
-                        errors.append(f"TRUSTED_PROXY_IPS contains invalid entry: {token}")
+            self._validate_proxy_settings(errors)
+            self._validate_public_base_url(errors)
+        self._validate_rate_limit_settings(errors)
+        self._validate_body_limit(errors)
+        return errors
 
-            if self.trust_proxy_headers:
-                if not self.trusted_proxy_ips.strip():
-                    errors.append(
-                        "TRUST_PROXY_HEADERS=true requires non-empty "
-                        "TRUSTED_PROXY_IPS in production"
-                    )
-                elif not self.trusted_proxy_networks:
-                    errors.append(
-                        "TRUSTED_PROXY_IPS contains no valid CIDR or IP entries in production"
-                    )
+    def _validate_proxy_settings(self, errors: list[str]) -> None:
+        """Validate TRUSTED_PROXY_IPS / TRUST_PROXY_HEADERS for production use."""
+        if self.trust_proxy_headers and self.trusted_proxy_ips.strip():
+            for part in self.trusted_proxy_ips.split(","):
+                token = part.strip()
+                if token and self._parse_trusted_proxy_token(token) is None:
+                    errors.append(f"TRUSTED_PROXY_IPS contains invalid entry: {token}")
 
-            base_url = self.public_base_url.lower()
-            if "localhost" in base_url:
-                errors.append("PUBLIC_BASE_URL must not use localhost in production")
-            if not base_url.startswith("https://"):
-                errors.append("PUBLIC_BASE_URL must use https:// in production")
+        if self.trust_proxy_headers:
+            if not self.trusted_proxy_ips.strip():
+                errors.append(
+                    "TRUST_PROXY_HEADERS=true requires non-empty "
+                    "TRUSTED_PROXY_IPS in production"
+                )
+            elif not self.trusted_proxy_networks:
+                errors.append(
+                    "TRUSTED_PROXY_IPS contains no valid CIDR or IP entries in production"
+                )
 
+    def _validate_public_base_url(self, errors: list[str]) -> None:
+        """Validate PUBLIC_BASE_URL for production use."""
+        base_url = self.public_base_url.lower()
+        if "localhost" in base_url:
+            errors.append("PUBLIC_BASE_URL must not use localhost in production")
+        if not base_url.startswith("https://"):
+            errors.append("PUBLIC_BASE_URL must use https:// in production")
+
+    def _validate_rate_limit_settings(self, errors: list[str]) -> None:
+        """Validate rate limiter bounds."""
         if self.rate_limit_enabled and self.rate_limit_per_minute <= 0:
             errors.append(
                 "RATE_LIMIT_PER_MINUTE must be greater than 0 when rate limiting is enabled"
@@ -312,6 +321,8 @@ class Settings(BaseSettings):
                 "RATE_LIMIT_MAX_CLIENTS must be greater than 0 when rate limiting is enabled"
             )
 
+    def _validate_body_limit(self, errors: list[str]) -> None:
+        """Validate MAX_REQUEST_BODY_BYTES."""
         if self.max_request_body_bytes <= 0:
             errors.append("MAX_REQUEST_BODY_BYTES must be greater than 0")
         elif (
@@ -321,20 +332,20 @@ class Settings(BaseSettings):
             errors.append(
                 f"MAX_REQUEST_BODY_BYTES must not exceed {_MAX_REQUEST_BODY_BYTES} in production"
             )
-        return errors
 
     def _validate_env_config(self, errors: list[str]) -> None:
         """Validate the single-profile environment-based configuration."""
         domains = self.allowed_domains_set
-        if not domains or domains == frozenset({"example.com"}):
+        if not domains or domains == frozenset({_PLACEHOLDER_DOMAIN}):
             errors.append(
                 "ALLOWED_DOMAINS must be set to your real domain(s) in production "
-                "(not example.com)"
+                f"(not {_PLACEHOLDER_DOMAIN})"
             )
 
-        if self.imap_host == _PLACEHOLDER_IMAP_HOST and self.smtp_host == _PLACEHOLDER_SMTP_HOST:
+        if self.imap_host == _PLACEHOLDER_MAIL_HOST and self.smtp_host == _PLACEHOLDER_MAIL_HOST:
             errors.append(
-                "IMAP_HOST and SMTP_HOST still use placeholder mail.example.com in production"
+                f"IMAP_HOST and SMTP_HOST still use placeholder {_PLACEHOLDER_MAIL_HOST} "
+                "in production"
             )
 
     def _validate_domain_config(self, errors: list[str]) -> None:
@@ -346,19 +357,15 @@ class Settings(BaseSettings):
         if self.app_env.lower() != "production":
             return
 
-        if self.allowed_domains.strip() == "example.com":
-            # Ignore placeholder env domains when YAML mode is active.
-            pass
-
         for domain, domain_settings in self.domain_configs.items():
-            if domain == "example.com":
-                errors.append("CONFIG_FILE must not use example.com in production")
+            if domain == _PLACEHOLDER_DOMAIN:
+                errors.append(f"CONFIG_FILE must not use {_PLACEHOLDER_DOMAIN} in production")
             if (
-                domain_settings.imap.host == _PLACEHOLDER_IMAP_HOST
-                and domain_settings.smtp.host == _PLACEHOLDER_SMTP_HOST
+                domain_settings.imap.host == _PLACEHOLDER_MAIL_HOST
+                and domain_settings.smtp.host == _PLACEHOLDER_MAIL_HOST
             ):
                 errors.append(
-                    f"CONFIG_FILE domain {domain} still uses placeholder mail.example.com"
+                    f"CONFIG_FILE domain {domain} still uses placeholder {_PLACEHOLDER_MAIL_HOST}"
                 )
 
     def domain_settings_for(self, domain: str) -> DomainMailSettings | None:

@@ -39,6 +39,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - All workflows now declare a `concurrency:` group (cancel-on-supersede for CI checks,
   never-cancel for release/publish workflows).
 - README badges now sit after the description paragraph instead of before it.
+- `app/main.py`: `create_app()`'s Thunderbird/Apple Mail handlers and the Outlook POST body
+  are now plain module-level functions instead of nested closures, and a shared
+  `_not_found_response()` helper replaces four duplicated 404 responses. Reduces
+  SonarCloud-flagged Cognitive Complexity and unused `async` findings with no behavior
+  change (verified by the full test suite, including the mailbox-enumeration invariant).
+- `app/config.py`: `_shared_validation_errors()` is split into four focused validation
+  methods, and the duplicated `"mail.example.com"`/`"example.com"` literals are now single
+  constants. Same validation behavior and error messages, lower Cognitive Complexity.
+- `app/security.py`: `SecurityMiddleware.dispatch()`'s access-log branching is extracted
+  into `_log_access_event()`, and the log-sanitizer regex's character class no longer
+  duplicates `\t\n\v\f\r` between an explicit range and `\s` (same matched character set,
+  verified against the full BMP). Lower Cognitive Complexity, same logging output.
 
 ### Fixed
 
