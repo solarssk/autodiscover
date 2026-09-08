@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+#
+# Automatic review is off. Trigger a review on demand instead by commenting
+# "@coderabbitai review" on a PR.
+reviews:
+  auto_review:
+    enabled: false
