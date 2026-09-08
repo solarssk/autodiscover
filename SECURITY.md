@@ -61,17 +61,44 @@ There is no admin API in the current version. Configuration comes from environme
 | Client IP | Yes | Stored in the unified access log as `client_ip=` |
 | IMAP/SMTP hosts | Returned to clients | Comes from ENV or mounted YAML config, not from a user database |
 
-## Built-in mitigations
+## Main risks and mitigations
 
-- Safe XML parsing with `defusedxml`
-- Request body size limit
-- XML output escaping via `html.escape`
-- Log-injection prevention: `X-Request-ID` and URL paths are restricted to safe characters before any log write (`X-Request-ID`: alphanumerics plus `._-`; paths: control chars, whitespace, and `=` replaced)
-- Rate limiting per IP with `RATE_LIMIT_PER_MINUTE` and bounded in-memory storage
-- Security headers: `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, `Cache-Control: no-store`, `Content-Security-Policy`, `Permissions-Policy`, and `Strict-Transport-Security` (when `PUBLIC_BASE_URL` uses `https://`)
-- Neutral error responses that do not expose your domain list
+### XXE / XML bombs via the Outlook Autodiscover body
+
+**Risk:** `POST /autodiscover/autodiscover.xml` accepts an attacker-controlled XML body. A crafted payload with external entity references or nested entity expansion (billion laughs) could try to read local files or exhaust memory during parsing.
+
+**Mitigation:** `parse_outlook_email_address()` (`app/security.py`) parses with `defusedxml.ElementTree.fromstring`, which refuses external entities and DTDs outright. A malicious payload fails to parse and is treated as "no email address found," not executed.
+
+### Memory exhaustion via an oversized or slow-drip request body
+
+**Risk:** A very large or deliberately slow POST body to the Outlook endpoint could be used to hold a worker's memory or a connection open.
+
+**Mitigation:** the request body is read via `request.stream()` and checked against `MAX_REQUEST_BODY_BYTES` on every chunk, rejecting with `413` the instant the limit is crossed — never buffering the full body first to decide.
+
+### Log injection via request metadata
+
+**Risk:** A forged `X-Request-ID` header or a URL path containing control characters, `=`, or embedded newlines could be used to forge fake log lines or break `key=value` log parsing.
+
+**Mitigation:** `_sanitize_request_id()` keeps only `[A-Za-z0-9._-]` and caps the result at 64 characters (falling back to a fresh UUID otherwise); `_sanitize_for_log()` replaces control characters, `=`, and whitespace in the logged path with `?` before anything is written.
+
+### Client-IP spoofing via forwarded headers
+
+**Risk:** A client could set `X-Forwarded-For` or `X-Real-IP` directly on its own request, trying to poison the access log or dodge per-IP rate limiting.
+
+**Mitigation:** `get_client_ip()` only honors these headers when the immediate TCP peer is inside `TRUSTED_PROXY_IPS`, and even then parses `X-Forwarded-For` right-to-left, skipping hops that are themselves trusted proxies. `TRUST_PROXY_HEADERS` defaults to `false`.
+
+### Domain-list disclosure via error responses
+
+**Risk:** Probing with random domains could reveal which domains are actually configured, if the "wrong domain" case looked any different from the "right domain, made-up mailbox" case.
+
+**Mitigation:** `_domain_error_response()` returns the exact same response (configurable via `RETURN_404_FOR_UNKNOWN_DOMAIN`) for both, and the landing page never lists configured domains.
+
+### Everything else
+
+- XML output escaping via `html.escape(..., quote=False)`, not `xml.sax.saxutils.escape` (see `AGENTS.md`)
+- Security headers on every response: `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, `Cache-Control: no-store`, `Content-Security-Policy`, `Permissions-Policy`, and `Strict-Transport-Security` when `PUBLIC_BASE_URL` uses `https://`
 - Non-root container user
-- CI security checks with `gitleaks`, `bandit`, `pip-audit`, Trivy, and CodeQL
+- CI security checks: `gitleaks`, `bandit`, `pip-audit`, Trivy, and CodeQL (see the table below)
 
 ## Security controls / CI
 
@@ -89,6 +116,7 @@ There is no admin API in the current version. Configuration comes from environme
 | Documentation-impact check | PR's declared doc-update checkbox verified against the actual diff | Every non-Dependabot PR | `.github/workflows/ci.yml` (`docs-impact`) |
 | Codecov | Coverage report and patch-coverage signal (not yet a merge gate) | Every push and PR | `.github/workflows/ci.yml` (`test`) |
 | SonarCloud | Static analysis, code smells, and security rating (not yet a merge gate) | Every push and PR | `.github/workflows/ci.yml` (`test`) |
+| Verify standard | Mechanical check against the `solarssk/playbook` Tier 2 checklist (SHA-pinning, `SECURITY.md`, issue templates, `concurrency:` blocks, and more) | Every push and PR | `.github/workflows/verify-standard.yml` |
 
 This table is a claim you can check directly: open the named workflow file and confirm the
 step is really there. Keep it honest rather than complete — remove a row the day a control is
@@ -127,7 +155,13 @@ Changes in the list below need a deliberate security review because they would a
 - a public page that exposes internal hostnames or allowed domains,
 - forwarded-header trust without explicit proxy restrictions.
 
+## Supported versions
+
+Only the latest tagged release is supported. There are no long-term-support branches; upgrade to the current tag (see [CHANGELOG.md](CHANGELOG.md)) before reporting an issue that a newer release may have already fixed.
+
 ## Vulnerability disclosure
+
+This is a small, single-maintainer service. We follow coordinated disclosure: please give us reasonable time to ship a fix before making an issue public, and we'll credit researchers who do.
 
 Please open a private security advisory instead of a public issue:
 
@@ -140,4 +174,4 @@ Include:
 - expected impact,
 - an optional suggested fix.
 
-We aim to acknowledge reports within 48 hours.
+We aim to acknowledge reports within 48 hours and to ship a fix for a confirmed critical issue within 14 days.

@@ -10,6 +10,12 @@ Tier: 2 (see playbook/docs/tiers.md) — it ships a container image and runs as 
 deploy-and-forget service, which puts it at Tier 2 by the tier system's own first
 question, even though it has one maintainer and a narrow, deliberately small feature set.
 
+Compliance with the Tier 2 checklist is checked mechanically on every push and PR by
+`.github/workflows/verify-standard.yml`, a reusable workflow from `solarssk/playbook`
+that reads the "Tier: 2" line above and runs the matching file/pattern checks (SHA-pinning,
+`SECURITY.md`, issue templates, `concurrency:` blocks, and more). It fails the build on a
+hard miss and warns on a soft one; it does not replace judgment on tier choice itself.
+
 ## What this project is
 
 `mail-autodiscover` is a stateless FastAPI service that returns mail client configuration
