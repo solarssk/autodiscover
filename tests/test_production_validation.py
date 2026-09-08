@@ -94,6 +94,11 @@ def test_production_rejects_non_positive_rate_limit_capacity() -> None:
         _production_settings(rate_limit_enabled=True, rate_limit_max_clients=0)
 
 
+def test_production_rejects_body_limit_over_max() -> None:
+    with pytest.raises(ValidationError, match="must not exceed"):
+        _production_settings(max_request_body_bytes=2_000_000)
+
+
 def test_non_production_allows_placeholder_defaults() -> None:
     settings = make_settings(app_env="test")
     assert settings.allowed_domains_set == frozenset({"example.com", "example.pl"})

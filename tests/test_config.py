@@ -1,5 +1,8 @@
 """Tests for configuration and SettingsProvider."""
 
+import pytest
+from pydantic import ValidationError
+
 from app.config import EnvSettingsProvider, Settings
 from tests.conftest import FixedSettingsProvider, make_settings
 
@@ -35,3 +38,18 @@ def test_trusted_proxy_ips_parsed_as_networks() -> None:
 def test_access_log_skip_paths_parsed() -> None:
     settings = make_settings(access_log_skip_paths="/health, /favicon.ico")
     assert settings.access_log_skip_paths_set == frozenset({"/health", "/favicon.ico"})
+
+
+def test_allowed_domains_none_becomes_empty_set() -> None:
+    settings = make_settings(allowed_domains=None)
+    assert settings.allowed_domains_set == frozenset()
+
+
+def test_domain_settings_for_returns_none_for_disallowed_domain() -> None:
+    settings = make_settings()
+    assert settings.domain_settings_for("not-allowed.test") is None
+
+
+def test_rejects_non_positive_body_limit() -> None:
+    with pytest.raises(ValidationError, match="must be greater than 0"):
+        make_settings(max_request_body_bytes=0)

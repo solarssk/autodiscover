@@ -1,7 +1,7 @@
 """Tests for email validation."""
 
 from app.config import UsernameFormat
-from app.email_utils import EmailValidationError, build_username, validate_email
+from app.email_utils import EmailValidationError, build_username, extract_domain, validate_email
 from tests.conftest import make_settings
 
 
@@ -65,6 +65,10 @@ def test_build_username_email_format() -> None:
     validated, _ = validate_email("jan@example.com", settings)
     assert validated is not None
     assert build_username(validated, settings.username_format) == "jan@example.com"
+
+
+def test_extract_domain_without_at_returns_none() -> None:
+    assert extract_domain("no-at-sign") is None
 
 
 def test_build_username_localpart_format() -> None:

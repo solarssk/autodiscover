@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -204,6 +205,24 @@ def test_rate_limit_evicts_oldest_clients_when_over_capacity() -> None:
     assert is_rate_limited("203.0.113.3", settings) is False
     assert len(_rate_limit_store) == 2
     assert "203.0.113.1" not in _rate_limit_store
+
+
+def test_rate_limit_cleanup_evicts_stale_entries() -> None:
+    reset_rate_limit_store()
+    settings = make_settings(
+        rate_limit_enabled=True,
+        rate_limit_per_minute=100,
+        rate_limit_cleanup_interval_seconds=0,
+    )
+
+    assert is_rate_limited("203.0.113.9", settings) is False
+    assert "203.0.113.9" in _rate_limit_store
+
+    # Age the entry past the 60s window; the next call's cleanup pass
+    # (interval=0 forces one on every call) should evict it.
+    _rate_limit_store["203.0.113.9"] = [time.monotonic() - 61]
+    assert is_rate_limited("203.0.113.10", settings) is False
+    assert "203.0.113.9" not in _rate_limit_store
 
 
 def test_health_not_logged_by_default(caplog: pytest.LogCaptureFixture) -> None:
