@@ -11,7 +11,6 @@ concurrency:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   gitleaks:
@@ -90,19 +89,26 @@ jobs:
       - run: pip install ".[dev]"
       - run: pytest -v --junitxml=junit.xml
 
+      # "Tests and coverage" is a required status check, but Codecov/SonarCloud
+      # are documented as report-only signals, not merge gates, at this stage.
+      # continue-on-error makes that true regardless of what each action's own
+      # exit code does: an external-service hiccup (Codecov down, a transient
+      # SonarCloud error) must not fail this required job.
       - name: Upload coverage to Codecov
         # Fork and Dependabot PRs can't read repo secrets; tests still run either way.
         if: ${{ env.CODECOV_TOKEN != '' }}
+        continue-on-error: true
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
           token: ${{ env.CODECOV_TOKEN }}
           files: coverage.xml
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
+        continue-on-error: true
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3  # v1.2.1
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -117,6 +123,7 @@ jobs:
       # scan, or makes this step fail outright.
       - name: SonarCloud scan
         if: ${{ env.SONAR_TOKEN != '' }}
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f  # v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -156,6 +163,9 @@ jobs:
   docker:
     name: Docker build and scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:

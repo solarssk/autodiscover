@@ -7,8 +7,12 @@ on:
   schedule:
     - cron: "0 4 * * 1"
 
+# The scheduled run resolves to the same github.ref as an ordinary push to
+# main (refs/heads/main), so without separating them a push landing while
+# the weekly scan is queued behind an in-progress run would silently evict
+# it: one running + one pending per group, not a real queue.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'scheduled' || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
