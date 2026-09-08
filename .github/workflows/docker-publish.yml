@@ -6,9 +6,27 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Grouped per ref, not per repository: a GitHub Actions concurrency group
+# holds at most one *running* and one *pending* run, not a FIFO queue. A
+# shared, repository-wide group would let a third, unrelated run (a `main`
+# push arriving while a version-tag release is still queued behind an
+# in-progress run) silently evict that queued release, so its versioned
+# image and SBOM would simply never be built, with no error anywhere. Each
+# ref getting its own group means a tag release can only ever be evicted by
+# another push to that *same* ref, which doesn't happen for an immutable
+# version tag. The accepted trade-off: a `main` push and a version-tag push
+# landing close together run fully in parallel and could each try to write
+# `:latest`, so it may briefly point at either one's content. `:latest` is
+# already documented (README, SECURITY.md) as unsuitable for production use
+# for this and other reasons; losing an entire release outright is worse.
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  contents: read
+  contents: write
   packages: write
+  security-events: write
 
 env:
   REGISTRY: ghcr.io
@@ -49,11 +67,161 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      - name: Build and push image
+      # Each platform is built exactly once, pushed by digest (unreferenced by
+      # any tag yet), and that same digest is what gets scanned below. The
+      # Dockerfile runs `apt-get upgrade` at build time, so a second, separate
+      # "rebuild for push" step could resolve different package versions than
+      # what was scanned — building once and reusing the digest avoids that
+      # entirely, rather than relying on layer-cache reuse for identity.
+      - name: Build & push linux/amd64 by digest
+        id: build-amd64
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: linux/amd64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+      # docker/build-push-action's reported digest is an OCI index (the real
+      # image plus a separate build-provenance attestation manifest, added by
+      # buildx's default provenance since v0.10) rather than a single image
+      # manifest. Without TRIVY_PLATFORM, Trivy resolves a multi-manifest
+      # reference by matching the scanning host's own platform: verified
+      # locally that this works by luck for the amd64 digest on an amd64
+      # runner, but fails outright for the arm64 digest ("no child with
+      # platform linux/amd64 in index") since only linux/arm64 and the
+      # unknown/unknown attestation entry exist there. Pinned explicitly on
+      # both sides so neither depends on the runner's own architecture.
+      - name: Trivy scan linux/amd64 (SARIF, always uploaded)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
+          format: sarif
+          output: trivy-amd64.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+
+      - uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        if: always()
+        with:
+          sarif_file: trivy-amd64.sarif
+          category: trivy-amd64
+
+      # Hard gate: fails the job, before the manifest below is ever created,
+      # on fixable CRITICAL findings. The digest above already exists in the
+      # registry at this point, but it isn't referenced by any tag, so it's
+      # unreachable to anyone pulling `:latest` or a version tag.
+      - name: Trivy gate linux/amd64 (fixable CRITICAL only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Build & push linux/arm64 by digest
+        id: build-arm64
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        with:
+          context: .
+          platforms: linux/arm64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+      - name: Trivy scan linux/arm64 (SARIF, always uploaded)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
+          format: sarif
+          output: trivy-arm64.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+
+      - uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        if: always()
+        with:
+          sarif_file: trivy-arm64.sarif
+          category: trivy-arm64
+
+      - name: Trivy gate linux/arm64 (fixable CRITICAL only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Generate CycloneDX SBOM (linux/amd64)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
+          format: cyclonedx
+          output: sbom-amd64.cdx.json
+
+      - name: Generate CycloneDX SBOM (linux/arm64)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
+          format: cyclonedx
+          output: sbom-arm64.cdx.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: sbom
+          path: sbom-*.cdx.json
+          retention-days: 90
+
+      # Only reached once both platforms' gates above passed. Composes the
+      # real, user-visible tags (latest, version tags, ...) directly from the
+      # two already-scanned digests — never a rebuild.
+      - name: Create and push multi-arch manifest
+        run: |
+          set -euo pipefail
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && tag_args+=(--tag "$tag")
+          done <<< "${{ steps.meta.outputs.tags }}"
+          docker buildx imagetools create "${tag_args[@]}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}"
+
+      # release.yml also triggers on this same tag push and creates the
+      # GitHub Release independently; wait for it rather than assuming it
+      # already exists, so this doesn't lose the race on a fast runner.
+      - name: Attach SBOM to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          for _ in $(seq 1 30); do
+            if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              gh release upload "$TAG" sbom-amd64.cdx.json sbom-arm64.cdx.json --clobber --repo "${{ github.repository }}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Release $TAG did not appear within 5 minutes; SBOM was not attached."
+          exit 1
