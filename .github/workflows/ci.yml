@@ -25,8 +25,10 @@ jobs:
 
       - name: Install gitleaks
         run: |
-          curl -sSL -o gitleaks.tar.gz \
+          set -euo pipefail
+          curl -fsSL --proto '=https' --tlsv1.2 -o gitleaks.tar.gz \
             https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz
+          echo "79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
           echo "$PWD" >> "$GITHUB_PATH"
 
@@ -78,12 +80,47 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           persist-credentials: false
+          # SonarCloud's scan below needs full history (not the default
+          # shallow clone) to attribute new-vs-existing code by git blame.
+          fetch-depth: 0
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install ".[dev]"
-      - run: pytest -v
+      - run: pytest -v --junitxml=junit.xml
+
+      - name: Upload coverage to Codecov
+        # Fork and Dependabot PRs can't read repo secrets; tests still run either way.
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: true
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3  # v1.2.1
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: junit.xml
+
+      # CI-based analysis (sonar-project.properties), not SonarCloud's
+      # Automatic Analysis; the two are mutually exclusive. Automatic
+      # Analysis must be turned off in the SonarCloud project settings
+      # (Administration -> Analysis Method) or it silently overrides this
+      # scan, or makes this step fail outright.
+      - name: SonarCloud scan
+        if: ${{ env.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f  # v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
 
   typecheck:
     name: Type check (mypy)

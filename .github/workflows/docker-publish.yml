@@ -6,8 +6,12 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# One shared group across every ref: `main` pushes and stable version tags
+# both publish the `latest` tag, so a push and a tag release racing each
+# other must queue, not run concurrently and overwrite `latest` in whichever
+# order happens to finish last.
 concurrency:
-  group: docker-publish-${{ github.ref }}
+  group: docker-publish-${{ github.repository }}
   cancel-in-progress: false
 
 permissions:
@@ -54,67 +58,120 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      - name: Build image for scanning
+      # Each platform is built exactly once, pushed by digest (unreferenced by
+      # any tag yet), and that same digest is what gets scanned below. The
+      # Dockerfile runs `apt-get upgrade` at build time, so a second, separate
+      # "rebuild for push" step could resolve different package versions than
+      # what was scanned — building once and reusing the digest avoids that
+      # entirely, rather than relying on layer-cache reuse for identity.
+      - name: Build & push linux/amd64 by digest
+        id: build-amd64
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
-          push: false
-          load: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
 
-      - name: Trivy scan (SARIF, always uploaded)
+      - name: Trivy scan linux/amd64 (SARIF, always uploaded)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
           format: sarif
-          output: trivy-results.sarif
+          output: trivy-amd64.sarif
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
 
       - uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
         if: always()
         with:
-          sarif_file: trivy-results.sarif
+          sarif_file: trivy-amd64.sarif
+          category: trivy-amd64
 
-      # Hard gate: fails the job, before any push, on fixable CRITICAL findings.
-      # ignore-unfixed avoids a permanently red build over an unpatched
-      # base-image CVE with no fix available yet.
-      - name: Trivy gate (fixable CRITICAL only)
+      # Hard gate: fails the job, before the manifest below is ever created,
+      # on fixable CRITICAL findings. The digest above already exists in the
+      # registry at this point, but it isn't referenced by any tag, so it's
+      # unreachable to anyone pulling `:latest` or a version tag.
+      - name: Trivy gate linux/amd64 (fixable CRITICAL only)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
           format: table
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
 
-      - name: Generate CycloneDX SBOM
+      - name: Build & push linux/arm64 by digest
+        id: build-arm64
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: .
+          platforms: linux/arm64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+      - name: Trivy scan linux/arm64 (SARIF, always uploaded)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
+          format: sarif
+          output: trivy-arm64.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+
+      - uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        if: always()
+        with:
+          sarif_file: trivy-arm64.sarif
+          category: trivy-arm64
+
+      - name: Trivy gate linux/arm64 (fixable CRITICAL only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Generate CycloneDX SBOM (linux/amd64)
         if: startsWith(github.ref, 'refs/tags/')
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
           format: cyclonedx
-          output: sbom.cdx.json
+          output: sbom-amd64.cdx.json
+
+      - name: Generate CycloneDX SBOM (linux/arm64)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
+          format: cyclonedx
+          output: sbom-arm64.cdx.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           name: sbom
-          path: sbom.cdx.json
+          path: sbom-*.cdx.json
           retention-days: 90
 
-      - name: Build and push image
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # Only reached once both platforms' gates above passed. Composes the
+      # real, user-visible tags (latest, version tags, ...) directly from the
+      # two already-scanned digests — never a rebuild.
+      - name: Create and push multi-arch manifest
+        run: |
+          set -euo pipefail
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && tag_args+=(--tag "$tag")
+          done <<< "${{ steps.meta.outputs.tags }}"
+          docker buildx imagetools create "${tag_args[@]}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}"
 
       # release.yml also triggers on this same tag push and creates the
       # GitHub Release independently; wait for it rather than assuming it
@@ -128,9 +185,10 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           for _ in $(seq 1 30); do
             if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-              gh release upload "$TAG" sbom.cdx.json --clobber --repo "${{ github.repository }}"
+              gh release upload "$TAG" sbom-amd64.cdx.json sbom-arm64.cdx.json --clobber --repo "${{ github.repository }}"
               exit 0
             fi
             sleep 10
           done
-          echo "::warning::Release $TAG did not appear within 5 minutes; SBOM is still available as a workflow artifact."
+          echo "::error::Release $TAG did not appear within 5 minutes; SBOM was not attached."
+          exit 1

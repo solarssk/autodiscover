@@ -15,10 +15,12 @@ import re
 import subprocess
 import sys
 
-DOCS_PATHS = ("docs/", "README.md", "SECURITY.md", "CHANGELOG.md")
+DOCS_PATHS = ("docs/", "README.md", "SECURITY.md", "CHANGELOG.md", "CONTRIBUTING.md")
 
 DOCS_UPDATED_RE = re.compile(r"^- \[[xX]\] Docs updated\s*$", re.MULTILINE)
-NO_DOCS_UPDATE_RE = re.compile(r"^- \[[xX]\] No doc update needed: \S.+$", re.MULTILINE)
+NO_DOCS_UPDATE_RE = re.compile(r"^- \[[xX]\] No doc update needed: (?P<reason>.+)$", re.MULTILINE)
+# Matches an unfilled template placeholder like "<state the reason>" left in place.
+PLACEHOLDER_REASON_RE = re.compile(r"^\s*<.*>\s*$")
 
 
 def changed_files(base_sha: str, head_sha: str) -> list[str]:
@@ -50,12 +52,15 @@ def main() -> int:
 
     body = pull_request.get("body") or ""
     docs_updated = bool(DOCS_UPDATED_RE.search(body))
-    no_docs_update = bool(NO_DOCS_UPDATE_RE.search(body))
+    no_docs_match = NO_DOCS_UPDATE_RE.search(body)
+    no_docs_update = bool(no_docs_match) and not PLACEHOLDER_REASON_RE.match(
+        no_docs_match.group("reason")
+    )
 
     if docs_updated == no_docs_update:
         print(
-            "Select exactly one Documentation impact declaration, "
-            "with a real reason if none is needed.",
+            "Select exactly one Documentation impact declaration, with a real reason "
+            "(not the unfilled '<state the reason>' placeholder) if none is needed.",
             file=sys.stderr,
         )
         return 1
