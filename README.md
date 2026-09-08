@@ -3,6 +3,8 @@
 <p align="center">
   <a href="https://github.com/solarssk/mail-autodiscover/actions/workflows/ci.yml"><img src="https://github.com/solarssk/mail-autodiscover/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   &nbsp;
+  <a href="https://github.com/solarssk/mail-autodiscover/actions/workflows/verify-standard.yml"><img src="https://github.com/solarssk/mail-autodiscover/actions/workflows/verify-standard.yml/badge.svg" alt="Verify standard"></a>
+  &nbsp;
   <a href="https://codecov.io/gh/solarssk/mail-autodiscover"><img src="https://codecov.io/gh/solarssk/mail-autodiscover/graph/badge.svg" alt="Code coverage"></a>
   &nbsp;
   <a href="https://sonarcloud.io/summary/new_code?id=solarssk_mail-autodiscover"><img src="https://sonarcloud.io/api/project_badges/measure?project=solarssk_mail-autodiscover&metric=alert_status" alt="SonarCloud Quality Gate"></a>
