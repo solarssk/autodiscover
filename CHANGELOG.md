@@ -11,12 +11,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - `.coderabbit.yaml`: automatic CodeRabbit review is off; trigger one on demand by
   commenting `@coderabbitai review` on a PR. Matches the same setting already used in
   `ssf-transmitter` and `wp-critical-css`.
+- `.github/CODEOWNERS`.
+- "Repository standard" pointer in `AGENTS.md` declaring this repo as Tier 2 of the
+  solarssk engineering standard (`solarssk/playbook`).
+- README table of contents, badge row, and License section.
 - CycloneDX SBOM generated on version tags and attached to the GitHub Release.
 - "Documentation impact" declaration on pull requests, checked in CI against the actual diff.
 - `SECURITY.md` now has a "Security controls / CI" table and a stated response-time SLA.
 
 ### Changed
 
+- `CLAUDE.md` is now a short `@AGENTS.md` import plus Claude-Code-specific notes, instead
+  of duplicating `AGENTS.md` in full.
 - `docker-publish.yml` now scans the actual image about to be pushed with Trivy (gated on
   fixable CRITICAL) before pushing it, instead of only scanning a separate PR-time build
   that never reaches the registry.
