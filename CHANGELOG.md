@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- CycloneDX SBOM generated on version tags and attached to the GitHub Release.
+- "Documentation impact" declaration on pull requests, checked in CI against the actual diff.
+- `SECURITY.md` now has a "Security controls / CI" table and a stated response-time SLA.
+
+### Changed
+
+- `docker-publish.yml` now scans the actual image about to be pushed with Trivy (gated on
+  fixable CRITICAL) before pushing it, instead of only scanning a separate PR-time build
+  that never reaches the registry.
+- `ci.yml`'s secret scan is now scoped to each run's own commit range instead of the
+  gitleaks GitHub Action's full-history default.
+- All workflows now declare a `concurrency:` group (cancel-on-supersede for CI checks,
+  never-cancel for release/publish workflows).
+
 ## [0.3.3] - 2026-06-21
 
 ### What's new

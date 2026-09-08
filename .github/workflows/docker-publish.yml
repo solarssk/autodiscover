@@ -6,9 +6,14 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  contents: read
+  contents: write
   packages: write
+  security-events: write
 
 env:
   REGISTRY: ghcr.io
@@ -49,6 +54,57 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: Build image for scanning
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan (SARIF, always uploaded)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+
+      - uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      # Hard gate: fails the job, before any push, on fixable CRITICAL findings.
+      # ignore-unfixed avoids a permanently red build over an unpatched
+      # base-image CVE with no fix available yet.
+      - name: Trivy gate (fixable CRITICAL only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Generate CycloneDX SBOM
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: sbom
+          path: sbom.cdx.json
+          retention-days: 90
+
       - name: Build and push image
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
@@ -57,3 +113,24 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # release.yml also triggers on this same tag push and creates the
+      # GitHub Release independently; wait for it rather than assuming it
+      # already exists, so this doesn't lose the race on a fast runner.
+      - name: Attach SBOM to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          for _ in $(seq 1 30); do
+            if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              gh release upload "$TAG" sbom.cdx.json --clobber --repo "${{ github.repository }}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::Release $TAG did not appear within 5 minutes; SBOM is still available as a workflow artifact."

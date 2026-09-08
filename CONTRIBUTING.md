@@ -35,12 +35,18 @@ All changes to `main` must go through a **pull request**. Direct pushes to `main
 
 | Check | What it does |
 |-------|----------------|
-| Secret scan (gitleaks) | Scans for leaked secrets |
+| Secret scan (gitleaks) | Scans this run's own commit range for leaked secrets |
+| Documentation impact declaration | Verifies the PR's "Documentation impact" checkbox against the actual diff |
 | Lint (ruff) | Python style and lint |
 | Tests and coverage | `pytest` with ≥90% coverage on `app/` |
 | Type check (mypy) | Static typing on `app/` |
 | Security (bandit + pip-audit) | Code and dependency security |
-| Docker build and scan | Image build + Trivy scan (blocks CRITICAL on PR; advisory SARIF upload on `main`) |
+| Docker build and scan | Image build + Trivy scan (blocks HIGH/CRITICAL on PR; advisory SARIF upload on `main`) |
+
+`docker-publish.yml` additionally re-scans and gates the actual multi-arch image right
+before it is pushed to GHCR (fixable CRITICAL only), and attaches a CycloneDX SBOM to the
+GitHub Release on version tags. See [SECURITY.md](SECURITY.md#security-controls--ci) for
+the full control-to-workflow mapping.
 
 ## Labels
 

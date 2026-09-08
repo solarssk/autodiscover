@@ -11,6 +11,12 @@
 - [ ] Security hardening
 - [ ] Dependency update
 
+## Documentation impact
+
+<!-- Select exactly one. -->
+- [ ] Docs updated
+- [ ] No doc update needed: <state the reason>
+
 ## Checklist
 
 - [ ] Tests added or updated (if behaviour changed)
