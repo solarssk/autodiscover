@@ -83,7 +83,7 @@ There is no admin API in the current version. Configuration comes from environme
 | deptry | Unused / missing dependency check | Every push and PR | `.github/workflows/ci.yml` (`security`) |
 | CodeQL | SAST (Python, GitHub Actions) | Every push, every PR, and weekly | `.github/workflows/codeql.yml` |
 | Trivy (pre-merge) | Container image scan; blocks on HIGH/CRITICAL on PRs, advisory SARIF upload only on push to `main` | Every push and PR | `.github/workflows/ci.yml` (`docker`) |
-| Trivy (pre-publish) | Container image scan of the actual image about to be pushed, gates on fixable CRITICAL | Push to `main` and version tags | `.github/workflows/docker-publish.yml` |
+| Trivy (pre-publish) | Container image scan of the actual image about to be pushed, gates on fixable HIGH/CRITICAL | Push to `main` and version tags | `.github/workflows/docker-publish.yml` |
 | CycloneDX SBOM | Software bill of materials for the published image | Version tags, attached to the GitHub Release | `.github/workflows/docker-publish.yml` |
 | Dependabot | Dependency and GitHub Actions update PRs | Weekly | `.github/dependabot.yml` |
 | Documentation-impact check | PR's declared doc-update checkbox verified against the actual diff | Every non-Dependabot PR | `.github/workflows/ci.yml` (`docs-impact`) |

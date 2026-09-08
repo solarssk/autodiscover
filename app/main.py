@@ -208,9 +208,17 @@ def create_app(settings_provider: SettingsProvider | None = None) -> FastAPI:
         if not settings.outlook_enabled:
             return JSONResponse(status_code=404, content={"detail": "Not found"})
 
-        body = await request.body()
-        if len(body) > settings.max_request_body_bytes:
-            return JSONResponse(status_code=413, content={"detail": "Request entity too large"})
+        # Enforce the limit while reading, not after: request.body() buffers
+        # the entire stream into memory before any check can run, which lets
+        # an oversized POST exhaust worker memory regardless of the limit.
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > settings.max_request_body_bytes:
+                return JSONResponse(status_code=413, content={"detail": "Request entity too large"})
+            chunks.append(chunk)
+        body = b"".join(chunks)
 
         email_raw = parse_outlook_email_address(body)
         if not email_raw:
