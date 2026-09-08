@@ -66,21 +66,26 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # `latest` is enabled only for `main`, never for a version tag. main
-      # pushes share one concurrency group and so are already serialized
-      # against each other, but a tag push runs in its OWN group (see the
-      # concurrency comment above) — fully in parallel with any main push,
-      # including one still writing `latest` to GHCR and Docker Hub in two
-      # separate steps. With both refs eligible to write `latest`, their
-      # GHCR and Docker Hub writes could interleave (e.g. main's GHCR write,
-      # then tag's GHCR write, then tag's Docker Hub write, then main's
-      # Docker Hub write) and leave the two registries' `latest` pointing at
-      # different digests — silently breaking the same-image guarantee this
-      # workflow otherwise provides. The release process (AGENTS.md) always
-      # tags a commit that was already pushed to `main` first, so `main`'s
-      # own run has already published `latest` for that exact content by the
-      # time the tag exists; the tag push only needs to add its own
-      # `vX.Y.Z`/`X.Y`/`sha-...` tags, not touch `latest` a second time.
+      # `latest` and the `sha-*` tag are enabled only for `main`, never for a
+      # version tag. main pushes share one concurrency group and so are
+      # already serialized against each other, but a tag push runs in its
+      # OWN group (see the concurrency comment above) — fully in parallel
+      # with any main push, including one still writing these shared tags to
+      # GHCR and Docker Hub in two separate steps. A version tag is always
+      # cut from a commit already on `main` (AGENTS.md's release process),
+      # so both runs would compute the identical `sha-<short>` string for
+      # that commit — but not necessarily an identical image: the Dockerfile
+      # runs `apt-get upgrade` at build time, so two independent builds of
+      # the same commit, minutes apart, can resolve different package
+      # versions and produce different digests. With both refs eligible to
+      # write the same tag name, their GHCR and Docker Hub writes could
+      # interleave (e.g. main's GHCR write, then tag's GHCR write, then
+      # tag's Docker Hub write, then main's Docker Hub write) and leave that
+      # tag pointing at different digests across the two registries —
+      # silently breaking the same-image guarantee this workflow otherwise
+      # provides. main's own run has already published `latest` and
+      # `sha-<short>` for that exact commit by the time the tag exists, so
+      # the tag push only needs to add its own `vX.Y.Z`/`X.Y` tags.
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9  # v6.1.0
@@ -88,7 +93,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,format=short
+            type=sha,format=short,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 

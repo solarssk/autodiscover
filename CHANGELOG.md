@@ -40,8 +40,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   registries each could interleave and leave GHCR and Docker Hub's `latest` pointing at
   different digests. The release process always tags a commit already pushed to `main`,
   so `main`'s own run has already published `latest` for that content by the time the tag
-  exists. Added `docker-compose.dockerhub.yml` as a Docker-Hub equivalent of the existing
-  `docker-compose.ghcr.yml`.
+  exists. `sha-<short>` is restricted to `main` for the same reason: a version tag shares
+  its commit's short SHA with an already-published main run, and the `apt-get upgrade` in
+  the Dockerfile means two independent builds of that same commit aren't guaranteed to
+  produce the same digest, so the same cross-registry interleaving risk applied there too.
+  Added `docker-compose.dockerhub.yml` as a Docker-Hub equivalent of the existing
+  `docker-compose.ghcr.yml`, defaulting to `latest` rather than a pinned version for now,
+  since no version tag has been published to Docker Hub yet.
 
 ### Changed
 
