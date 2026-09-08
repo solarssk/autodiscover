@@ -35,12 +35,19 @@ All changes to `main` must go through a **pull request**. Direct pushes to `main
 
 | Check | What it does |
 |-------|----------------|
-| Secret scan (gitleaks) | Scans for leaked secrets |
+| Secret scan (gitleaks) | Scans this run's own commit range for leaked secrets |
+| Documentation impact declaration | Verifies the PR's "Documentation impact" checkbox against the actual diff (skipped for Dependabot PRs) |
 | Lint (ruff) | Python style and lint |
-| Tests and coverage | `pytest` with ≥90% coverage on `app/` |
+| Tests and coverage | `pytest` with ≥90% coverage on `app/`; also uploads to Codecov and runs a SonarCloud scan (both report-only, not merge gates yet) |
 | Type check (mypy) | Static typing on `app/` |
 | Security (bandit + pip-audit) | Code and dependency security |
-| Docker build and scan | Image build + Trivy scan (blocks CRITICAL on PR; advisory SARIF upload on `main`) |
+| Docker build and scan | Image build + Trivy scan (blocks HIGH/CRITICAL on PR; advisory SARIF upload on `main`) |
+
+`docker-publish.yml` additionally builds each published platform (`linux/amd64`,
+`linux/arm64`) once, pushes it by digest, and scans and gates that exact digest on
+fixable CRITICAL before the real `latest`/version tags are ever created from it. A
+CycloneDX SBOM per platform is attached to the GitHub Release on version tags. See
+[SECURITY.md](SECURITY.md#security-controls--ci) for the full control-to-workflow mapping.
 
 ## Labels
 

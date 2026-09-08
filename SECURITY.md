@@ -73,6 +73,27 @@ There is no admin API in the current version. Configuration comes from environme
 - Non-root container user
 - CI security checks with `gitleaks`, `bandit`, `pip-audit`, Trivy, and CodeQL
 
+## Security controls / CI
+
+| Control | Scope | When | Workflow |
+|---|---|---|---|
+| gitleaks | Secret scan, scoped to the run's own commit range | Every push and PR | `.github/workflows/ci.yml` (`gitleaks`) |
+| bandit | Static analysis (Python) | Every push and PR | `.github/workflows/ci.yml` (`security`) |
+| pip-audit | Dependency vulnerability audit | Every push and PR | `.github/workflows/ci.yml` (`security`) |
+| deptry | Unused / missing dependency check | Every push and PR | `.github/workflows/ci.yml` (`security`) |
+| CodeQL | SAST (Python, GitHub Actions) | Every push, every PR, and weekly | `.github/workflows/codeql.yml` |
+| Trivy (pre-merge) | Container image scan; blocks on HIGH/CRITICAL on PRs, advisory SARIF upload only on push to `main` | Every push and PR | `.github/workflows/ci.yml` (`docker`) |
+| Trivy (pre-publish) | Container image scan of the actual image about to be pushed, gates on fixable CRITICAL | Push to `main` and version tags | `.github/workflows/docker-publish.yml` |
+| CycloneDX SBOM | Software bill of materials for the published image | Version tags, attached to the GitHub Release | `.github/workflows/docker-publish.yml` |
+| Dependabot | Dependency and GitHub Actions update PRs | Weekly | `.github/dependabot.yml` |
+| Documentation-impact check | PR's declared doc-update checkbox verified against the actual diff | Every non-Dependabot PR | `.github/workflows/ci.yml` (`docs-impact`) |
+| Codecov | Coverage report and patch-coverage signal (not yet a merge gate) | Every push and PR | `.github/workflows/ci.yml` (`test`) |
+| SonarCloud | Static analysis, code smells, and security rating (not yet a merge gate) | Every push and PR | `.github/workflows/ci.yml` (`test`) |
+
+This table is a claim you can check directly: open the named workflow file and confirm the
+step is really there. Keep it honest rather than complete — remove a row the day a control is
+removed, rather than leaving a stale entry.
+
 ## Deployment requirements
 
 1. Run the service behind an HTTPS reverse proxy.
@@ -118,3 +139,5 @@ Include:
 - steps to reproduce,
 - expected impact,
 - an optional suggested fix.
+
+We aim to acknowledge reports within 48 hours.
