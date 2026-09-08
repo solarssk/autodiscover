@@ -18,18 +18,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - CycloneDX SBOM generated on version tags and attached to the GitHub Release.
 - "Documentation impact" declaration on pull requests, checked in CI against the actual diff.
 - `SECURITY.md` now has a "Security controls / CI" table and a stated response-time SLA.
+- Regression tests for the documented "no mailbox enumeration" invariant: two different
+  mailboxes in an allowed domain must get the same response shape and status code across
+  Outlook, Thunderbird, and Apple Mail.
 
 ### Changed
 
 - `CLAUDE.md` is now a short `@AGENTS.md` import plus Claude-Code-specific notes, instead
   of duplicating `AGENTS.md` in full.
 - `docker-publish.yml` now scans the actual image about to be pushed with Trivy (gated on
-  fixable CRITICAL) before pushing it, instead of only scanning a separate PR-time build
-  that never reaches the registry.
+  fixable HIGH/CRITICAL) before pushing it, instead of only scanning a separate PR-time
+  build that never reaches the registry.
 - `ci.yml`'s secret scan is now scoped to each run's own commit range instead of the
   gitleaks GitHub Action's full-history default.
 - All workflows now declare a `concurrency:` group (cancel-on-supersede for CI checks,
   never-cancel for release/publish workflows).
+- README badges now sit after the description paragraph instead of before it.
+
+### Fixed
+
+- `POST /autodiscover/autodiscover.xml` now enforces `MAX_REQUEST_BODY_BYTES` while
+  reading the request body, instead of buffering the entire body into memory first and
+  only checking the size afterward. An oversized POST is now rejected as soon as the
+  limit is crossed, without ever fully buffering it.
 
 ## [0.3.3] - 2026-06-21
 

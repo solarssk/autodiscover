@@ -100,6 +100,31 @@ def test_outlook_body_too_large() -> None:
     assert response.status_code == 413
 
 
+def test_outlook_body_at_exact_limit_succeeds() -> None:
+    """Boundary check: a body of exactly max_request_body_bytes must still
+    succeed; the streaming size check compares with '>', not '>=', so only
+    an over-limit body is rejected. Guards against an accidental '>' -> '>='
+    flip in the request.stream() loop."""
+    reset_rate_limit_store()
+    limit = 500
+    settings = make_settings(max_request_body_bytes=limit)
+    app = create_app(FixedSettingsProvider(settings))
+
+    base_length = len(OUTLOOK_REQUEST_TEMPLATE.format(email="x@example.com").encode())
+    local_part_length = 1 + (limit - base_length)
+    email = ("x" * local_part_length) + "@example.com"
+    body = OUTLOOK_REQUEST_TEMPLATE.format(email=email)
+    assert len(body.encode()) == limit
+
+    with TestClient(app) as c:
+        response = c.post(
+            "/autodiscover/autodiscover.xml",
+            content=body,
+            headers={"Content-Type": "text/xml"},
+        )
+    assert response.status_code == 200
+
+
 def test_outlook_unknown_domain_neutral_error(client: TestClient) -> None:
     body = OUTLOOK_REQUEST_TEMPLATE.format(email="user@evil.org")
     response = client.post(

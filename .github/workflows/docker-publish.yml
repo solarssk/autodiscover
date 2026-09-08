@@ -112,17 +112,18 @@ jobs:
           category: trivy-amd64
 
       # Hard gate: fails the job, before the manifest below is ever created,
-      # on fixable CRITICAL findings. The digest above already exists in the
-      # registry at this point, but it isn't referenced by any tag, so it's
-      # unreachable to anyone pulling `:latest` or a version tag.
-      - name: Trivy gate linux/amd64 (fixable CRITICAL only)
+      # on fixable HIGH/CRITICAL findings (playbook's Tier 2 requirement).
+      # The digest above already exists in the registry at this point, but
+      # it isn't referenced by any tag, so it's unreachable to anyone
+      # pulling `:latest` or a version tag.
+      - name: Trivy gate linux/amd64 (fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         env:
           TRIVY_PLATFORM: linux/amd64
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
           format: table
-          severity: CRITICAL
+          severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
 
@@ -154,14 +155,14 @@ jobs:
           sarif_file: trivy-arm64.sarif
           category: trivy-arm64
 
-      - name: Trivy gate linux/arm64 (fixable CRITICAL only)
+      - name: Trivy gate linux/arm64 (fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         env:
           TRIVY_PLATFORM: linux/arm64
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
           format: table
-          severity: CRITICAL
+          severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
 

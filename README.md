@@ -1,10 +1,5 @@
 # mail-autodiscover
 
-[![CI](https://github.com/solarssk/mail-autodiscover/actions/workflows/ci.yml/badge.svg)](https://github.com/solarssk/mail-autodiscover/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/solarssk/mail-autodiscover)](https://github.com/solarssk/mail-autodiscover/releases)
-![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)
-
 `mail-autodiscover` is a small deploy-and-forget HTTP service for self-hosted mail admins.
 
 It exposes standard autodiscovery endpoints for:
@@ -23,6 +18,11 @@ The product goal is deliberately narrow:
 - no LDAP / Synology / directory lookups
 
 If you want a small service you can deploy behind HTTPS and mostly forget about, this is what it is for.
+
+[![CI](https://github.com/solarssk/mail-autodiscover/actions/workflows/ci.yml/badge.svg)](https://github.com/solarssk/mail-autodiscover/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/solarssk/mail-autodiscover)](https://github.com/solarssk/mail-autodiscover/releases)
+![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)
 
 ## Table of Contents
 
