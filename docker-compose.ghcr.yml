@@ -5,7 +5,7 @@
 
 services:
   mail-autodiscover:
-    image: ghcr.io/solarssk/mail-autodiscover:${IMAGE_TAG:-0.3.2}
+    image: ghcr.io/solarssk/mail-autodiscover:${IMAGE_TAG:-0.3.3}
     container_name: ${CONTAINER_NAME:-mail-autodiscover}
     restart: unless-stopped
     ports:
