@@ -1,5 +1,10 @@
 # mail-autodiscover
 
+[![CI](https://github.com/solarssk/mail-autodiscover/actions/workflows/ci.yml/badge.svg)](https://github.com/solarssk/mail-autodiscover/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/solarssk/mail-autodiscover)](https://github.com/solarssk/mail-autodiscover/releases)
+![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)
+
 `mail-autodiscover` is a small deploy-and-forget HTTP service for self-hosted mail admins.
 
 It exposes standard autodiscovery endpoints for:
@@ -18,6 +23,23 @@ The product goal is deliberately narrow:
 - no LDAP / Synology / directory lookups
 
 If you want a small service you can deploy behind HTTPS and mostly forget about, this is what it is for.
+
+## Table of Contents
+
+- [What It Does](#what-it-does)
+- [Quick Start](#quick-start)
+  - [Single-Domain Or Shared Global Config](#single-domain-or-shared-global-config)
+  - [Multi-Domain Config File](#multi-domain-config-file)
+- [Docker / Portainer](#docker--portainer)
+- [Reverse Proxy Contract](#reverse-proxy-contract)
+- [Endpoints](#endpoints)
+- [Apple Mail Notes](#apple-mail-notes)
+- [Logging And Observability](#logging-and-observability)
+- [Documentation](#documentation)
+- [Security At A Glance](#security-at-a-glance)
+- [Local Development](#local-development)
+- [Quality Checks](#quality-checks)
+- [License](#license)
 
 ## What It Does
 
@@ -195,3 +217,7 @@ Run the same Python checks as GitHub CI:
 `pre-commit install` also runs `ruff`, `mypy`, and `pytest` automatically before each commit.
 
 Developer workflow and release process live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE).
