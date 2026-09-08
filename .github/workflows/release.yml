@@ -4,8 +4,14 @@ on:
   push:
     tags: ["v*"]
 
+# Grouped per ref (per tag), not per repository, for the same reason as
+# docker-publish.yml: a repo-wide group only holds one pending run, so a
+# third tag pushed while an earlier tag's release is still running would
+# silently evict the middle tag's queued run. That tag would then never get
+# a GitHub Release, and docker-publish.yml's SBOM-attach step (which polls
+# for this workflow's release to exist) would time out waiting for it.
 concurrency:
-  group: release-${{ github.repository }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
