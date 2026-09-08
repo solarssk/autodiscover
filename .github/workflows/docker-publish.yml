@@ -6,12 +6,21 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-# One shared group across every ref: `main` pushes and stable version tags
-# both publish the `latest` tag, so a push and a tag release racing each
-# other must queue, not run concurrently and overwrite `latest` in whichever
-# order happens to finish last.
+# Grouped per ref, not per repository: a GitHub Actions concurrency group
+# holds at most one *running* and one *pending* run, not a FIFO queue. A
+# shared, repository-wide group would let a third, unrelated run (a `main`
+# push arriving while a version-tag release is still queued behind an
+# in-progress run) silently evict that queued release, so its versioned
+# image and SBOM would simply never be built, with no error anywhere. Each
+# ref getting its own group means a tag release can only ever be evicted by
+# another push to that *same* ref, which doesn't happen for an immutable
+# version tag. The accepted trade-off: a `main` push and a version-tag push
+# landing close together run fully in parallel and could each try to write
+# `:latest`, so it may briefly point at either one's content. `:latest` is
+# already documented (README, SECURITY.md) as unsuitable for production use
+# for this and other reasons; losing an entire release outright is worse.
 concurrency:
-  group: docker-publish-${{ github.repository }}
+  group: docker-publish-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
