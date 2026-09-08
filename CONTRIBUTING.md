@@ -1,6 +1,7 @@
 # Contributing
 
-Thank you for contributing to **mail-autodiscover**.
+Thank you for contributing to **mail-autodiscover**. Please also read the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Workflow
 
