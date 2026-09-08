@@ -1,7 +1,14 @@
 # AGENTS.md — project context for AI coding agents
 
-> This file mirrors `CLAUDE.md`. Both exist so that different AI tools pick up the same
-> project context regardless of which filename they look for.
+> `CLAUDE.md` imports this file (`@AGENTS.md`) and adds Claude-Code-specific workflow
+> notes on top. Keep project-wide context here so both files can't drift apart.
+
+## Repository standard
+
+This repository follows the solarssk engineering standard: https://github.com/solarssk/playbook
+Tier: 2 (see playbook/docs/tiers.md) — it ships a container image and runs as a
+deploy-and-forget service, which puts it at Tier 2 by the tier system's own first
+question, even though it has one maintainer and a narrow, deliberately small feature set.
 
 ## What this project is
 
