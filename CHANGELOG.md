@@ -8,6 +8,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `.coderabbit.yaml`: automatic CodeRabbit review is off; trigger one on demand by
+  commenting `@coderabbitai review` on a PR. Matches the same setting already used in
+  `ssf-transmitter` and `wp-critical-css`.
 - `.github/CODEOWNERS`.
 - "Repository standard" pointer in `AGENTS.md` declaring this repo as Tier 2 of the
   solarssk engineering standard (`solarssk/playbook`).
