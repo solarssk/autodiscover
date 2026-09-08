@@ -13,6 +13,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/solarssk/mail-autodiscover/pkgs/container/mail-autodiscover"><img src="https://img.shields.io/badge/GHCR-solarssk%2Fmail--autodiscover-2496ED?logo=docker&logoColor=white" alt="GHCR: solarssk/mail-autodiscover"></a>
+  &nbsp;
   <img src="https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue" alt="Platforms: amd64, arm64">
 </p>
 
