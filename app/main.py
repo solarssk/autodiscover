@@ -23,6 +23,7 @@ from app.security import SecurityMiddleware, hash_domain, parse_outlook_email_ad
 from app.templates import outlook_autodiscover, outlook_get_neutral_response, thunderbird_autoconfig
 
 XML_CONTENT_TYPE = "application/xml; charset=utf-8"
+_NOT_FOUND_DETAIL = "Not found"
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 _settings_provider: SettingsProvider = EnvSettingsProvider()
@@ -40,10 +41,15 @@ def get_settings(
     return provider.get_settings()
 
 
+def _not_found_response() -> JSONResponse:
+    """Return the standard 404 for a disabled protocol or an unknown domain."""
+    return JSONResponse(status_code=404, content={"detail": _NOT_FOUND_DETAIL})
+
+
 def _domain_error_response(settings: Settings) -> JSONResponse:
     """Return the configured response for disallowed mailbox domains."""
     if settings.return_404_for_unknown_domain:
-        return JSONResponse(status_code=404, content={"detail": "Not found"})
+        return _not_found_response()
     return JSONResponse(status_code=400, content={"detail": "Configuration not available"})
 
 
@@ -55,6 +61,110 @@ def _invalid_request() -> JSONResponse:
 def _xml_response(content: str) -> Response:
     """Wrap autodiscovery XML with the standard response content type."""
     return Response(content=content, media_type=XML_CONTENT_TYPE)
+
+
+def _thunderbird_config(
+    request: Request,
+    emailaddress: str | None,
+    settings: Settings,
+) -> Response:
+    """Shared handler for Thunderbird autoconfig endpoints."""
+    if not settings.thunderbird_enabled:
+        return _not_found_response()
+
+    validated, error = validate_email(emailaddress, settings)
+    if error == EmailValidationError.EMPTY:
+        return _invalid_request()
+    if error is not None:
+        request.state.domain_allowed = False
+        return _domain_error_response(settings)
+
+    assert validated is not None
+    domain_settings = settings.domain_settings_for(validated.domain)
+    if domain_settings is None:
+        request.state.domain_allowed = False
+        return _domain_error_response(settings)
+
+    request.state.domain_allowed = True
+    request.state.domain_hash = hash_domain(validated.domain)
+    xml = thunderbird_autoconfig(validated, domain_settings, settings.username_format)
+    return _xml_response(xml)
+
+
+def _apple_mobileconfig(
+    request: Request,
+    emailaddress: str | None,
+    settings: Settings,
+) -> Response:
+    """Shared handler for Apple Mail mobileconfig endpoints."""
+    if not settings.apple_mobileconfig_enabled:
+        return _not_found_response()
+
+    validated, error = validate_email(emailaddress, settings)
+    if error == EmailValidationError.EMPTY:
+        return _invalid_request()
+    if error is not None:
+        request.state.domain_allowed = False
+        return _domain_error_response(settings)
+
+    assert validated is not None
+    domain_settings = settings.domain_settings_for(validated.domain)
+    if domain_settings is None:
+        request.state.domain_allowed = False
+        return _domain_error_response(settings)
+
+    request.state.domain_allowed = True
+    request.state.domain_hash = hash_domain(validated.domain)
+    body = apple_mail_mobileconfig(validated, domain_settings, settings.username_format)
+    return Response(
+        content=body,
+        media_type=MOBILECONFIG_CONTENT_TYPE,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{mobileconfig_filename(validated.domain)}"'
+            )
+        },
+    )
+
+
+async def _handle_outlook_autodiscover_post(request: Request, settings: Settings) -> Response:
+    """Read, validate, and answer an Outlook autodiscover POST request."""
+    if not settings.outlook_enabled:
+        return _not_found_response()
+
+    # Enforce the limit while reading, not after: request.body() buffers
+    # the entire stream into memory before any check can run, which lets
+    # an oversized POST exhaust worker memory regardless of the limit.
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > settings.max_request_body_bytes:
+            return JSONResponse(status_code=413, content={"detail": "Request entity too large"})
+        chunks.append(chunk)
+    body = b"".join(chunks)
+
+    email_raw = parse_outlook_email_address(body)
+    if not email_raw:
+        return _invalid_request()
+
+    validated, error = validate_email(email_raw, settings)
+    if error is not None:
+        request.state.domain_allowed = False
+        if error == EmailValidationError.DOMAIN_NOT_ALLOWED:
+            return _domain_error_response(settings)
+        return _invalid_request()
+
+    assert validated is not None
+    domain_settings = settings.domain_settings_for(validated.domain)
+    if domain_settings is None:
+        request.state.domain_allowed = False
+        return _domain_error_response(settings)
+
+    request.state.domain_allowed = True
+    request.state.domain_hash = hash_domain(validated.domain)
+    xml = outlook_autodiscover(validated, domain_settings, settings.username_format)
+    return _xml_response(xml)
 
 
 @asynccontextmanager
@@ -106,75 +216,13 @@ def create_app(settings_provider: SettingsProvider | None = None) -> FastAPI:
     async def apple_touch_icon() -> FileResponse:
         return FileResponse(_STATIC_DIR / "apple-touch-icon.png", media_type="image/png")
 
-    async def _thunderbird_config(
-        request: Request,
-        emailaddress: str | None,
-        settings: Settings,
-    ) -> Response:
-        """Shared handler for Thunderbird autoconfig endpoints."""
-        if not settings.thunderbird_enabled:
-            return JSONResponse(status_code=404, content={"detail": "Not found"})
-
-        validated, error = validate_email(emailaddress, settings)
-        if error == EmailValidationError.EMPTY:
-            return _invalid_request()
-        if error is not None:
-            request.state.domain_allowed = False
-            return _domain_error_response(settings)
-
-        assert validated is not None
-        domain_settings = settings.domain_settings_for(validated.domain)
-        if domain_settings is None:
-            request.state.domain_allowed = False
-            return _domain_error_response(settings)
-
-        request.state.domain_allowed = True
-        request.state.domain_hash = hash_domain(validated.domain)
-        xml = thunderbird_autoconfig(validated, domain_settings, settings.username_format)
-        return _xml_response(xml)
-
-    async def _apple_mobileconfig(
-        request: Request,
-        emailaddress: str | None,
-        settings: Settings,
-    ) -> Response:
-        """Shared handler for Apple Mail mobileconfig endpoints."""
-        if not settings.apple_mobileconfig_enabled:
-            return JSONResponse(status_code=404, content={"detail": "Not found"})
-
-        validated, error = validate_email(emailaddress, settings)
-        if error == EmailValidationError.EMPTY:
-            return _invalid_request()
-        if error is not None:
-            request.state.domain_allowed = False
-            return _domain_error_response(settings)
-
-        assert validated is not None
-        domain_settings = settings.domain_settings_for(validated.domain)
-        if domain_settings is None:
-            request.state.domain_allowed = False
-            return _domain_error_response(settings)
-
-        request.state.domain_allowed = True
-        request.state.domain_hash = hash_domain(validated.domain)
-        body = apple_mail_mobileconfig(validated, domain_settings, settings.username_format)
-        return Response(
-            content=body,
-            media_type=MOBILECONFIG_CONTENT_TYPE,
-            headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{mobileconfig_filename(validated.domain)}"'
-                )
-            },
-        )
-
     @app.get("/mail/config-v1.1.xml")
     async def thunderbird_config(
         request: Request,
         settings: Annotated[Settings, Depends(get_settings)],
         emailaddress: Annotated[str | None, Query()] = None,
     ) -> Response:
-        return await _thunderbird_config(request, emailaddress, settings)
+        return _thunderbird_config(request, emailaddress, settings)
 
     @app.get("/.well-known/autoconfig/mail/config-v1.1.xml")
     async def thunderbird_config_wellknown(
@@ -182,7 +230,7 @@ def create_app(settings_provider: SettingsProvider | None = None) -> FastAPI:
         settings: Annotated[Settings, Depends(get_settings)],
         emailaddress: Annotated[str | None, Query()] = None,
     ) -> Response:
-        return await _thunderbird_config(request, emailaddress, settings)
+        return _thunderbird_config(request, emailaddress, settings)
 
     @app.get("/mail/ios.mobileconfig")
     async def apple_mobileconfig(
@@ -190,7 +238,7 @@ def create_app(settings_provider: SettingsProvider | None = None) -> FastAPI:
         settings: Annotated[Settings, Depends(get_settings)],
         emailaddress: Annotated[str | None, Query()] = None,
     ) -> Response:
-        return await _apple_mobileconfig(request, emailaddress, settings)
+        return _apple_mobileconfig(request, emailaddress, settings)
 
     @app.get("/.well-known/apple-mail.mobileconfig")
     async def apple_mobileconfig_wellknown(
@@ -198,49 +246,14 @@ def create_app(settings_provider: SettingsProvider | None = None) -> FastAPI:
         settings: Annotated[Settings, Depends(get_settings)],
         emailaddress: Annotated[str | None, Query()] = None,
     ) -> Response:
-        return await _apple_mobileconfig(request, emailaddress, settings)
+        return _apple_mobileconfig(request, emailaddress, settings)
 
     @app.post("/autodiscover/autodiscover.xml")
     async def outlook_autodiscover_post(
         request: Request,
         settings: Annotated[Settings, Depends(get_settings)],
     ) -> Response:
-        if not settings.outlook_enabled:
-            return JSONResponse(status_code=404, content={"detail": "Not found"})
-
-        # Enforce the limit while reading, not after: request.body() buffers
-        # the entire stream into memory before any check can run, which lets
-        # an oversized POST exhaust worker memory regardless of the limit.
-        chunks: list[bytes] = []
-        total = 0
-        async for chunk in request.stream():
-            total += len(chunk)
-            if total > settings.max_request_body_bytes:
-                return JSONResponse(status_code=413, content={"detail": "Request entity too large"})
-            chunks.append(chunk)
-        body = b"".join(chunks)
-
-        email_raw = parse_outlook_email_address(body)
-        if not email_raw:
-            return _invalid_request()
-
-        validated, error = validate_email(email_raw, settings)
-        if error is not None:
-            request.state.domain_allowed = False
-            if error == EmailValidationError.DOMAIN_NOT_ALLOWED:
-                return _domain_error_response(settings)
-            return _invalid_request()
-
-        assert validated is not None
-        domain_settings = settings.domain_settings_for(validated.domain)
-        if domain_settings is None:
-            request.state.domain_allowed = False
-            return _domain_error_response(settings)
-
-        request.state.domain_allowed = True
-        request.state.domain_hash = hash_domain(validated.domain)
-        xml = outlook_autodiscover(validated, domain_settings, settings.username_format)
-        return _xml_response(xml)
+        return await _handle_outlook_autodiscover_post(request, settings)
 
     @app.get("/autodiscover/autodiscover.xml")
     async def outlook_autodiscover_get() -> Response:

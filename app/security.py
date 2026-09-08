@@ -25,7 +25,7 @@ _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _rate_limit_lock = Lock()
 _last_rate_limit_cleanup = 0.0
 
-_LOG_UNSAFE_RE = re.compile(r"[\x00-\x1F\x7F=\s]")
+_LOG_UNSAFE_RE = re.compile(r"[\x00-\x08\x0E-\x1F\x7F=\s]")
 _REQUEST_ID_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
@@ -247,6 +247,61 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if self._hsts_value:
             response.headers["Strict-Transport-Security"] = self._hsts_value
 
+    def _log_access_event(
+        self,
+        request: Request,
+        response: Response,
+        *,
+        request_id: str,
+        client_ip: str,
+        log_endpoint: str,
+    ) -> None:
+        """Log one completed request without ever including the full email address."""
+        domain_allowed = getattr(request.state, "domain_allowed", None)
+        if domain_allowed is None:
+            domain_info = "domain_allowed=unknown"
+        else:
+            domain_info = f"domain_allowed={'true' if domain_allowed else 'false'}"
+        domain_hash = getattr(request.state, "domain_hash", None)
+        if not domain_hash:
+            _log_event(
+                logging.INFO,
+                json_mode=self.settings.structured_json_logs,
+                logger_name=logger,
+                event="request",
+                request_id=request_id,
+                client_ip=client_ip,
+                method=request.method,
+                endpoint=log_endpoint,
+                status=response.status_code,
+                domain_allowed=domain_allowed,
+            )
+        elif self.settings.structured_json_logs:
+            _log_event(
+                logging.INFO,
+                json_mode=True,
+                logger_name=logger,
+                event="request",
+                request_id=request_id,
+                client_ip=client_ip,
+                method=request.method,
+                endpoint=log_endpoint,
+                status=response.status_code,
+                domain_allowed=domain_allowed,
+                domain_hash=domain_hash,
+            )
+        else:
+            domain_info += f" domain_hash={domain_hash}"
+            logger.info(
+                "request_id=%s client_ip=%s method=%s endpoint=%s status=%s %s",
+                request_id,
+                client_ip,
+                request.method,
+                log_endpoint,
+                response.status_code,
+                domain_info,
+            )
+
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
@@ -285,51 +340,13 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if not self.settings.disable_access_log and not should_skip_access_log(
             path, self.settings
         ):
-            domain_allowed = getattr(request.state, "domain_allowed", None)
-            if domain_allowed is None:
-                domain_info = "domain_allowed=unknown"
-            else:
-                domain_info = f"domain_allowed={'true' if domain_allowed else 'false'}"
-            domain_hash = getattr(request.state, "domain_hash", None)
-            if domain_hash:
-                if self.settings.structured_json_logs:
-                    _log_event(
-                        logging.INFO,
-                        json_mode=True,
-                        logger_name=logger,
-                        event="request",
-                        request_id=request_id,
-                        client_ip=client_ip,
-                        method=request.method,
-                        endpoint=log_endpoint,
-                        status=response.status_code,
-                        domain_allowed=domain_allowed,
-                        domain_hash=domain_hash,
-                    )
-                else:
-                    domain_info += f" domain_hash={domain_hash}"
-                    logger.info(
-                        "request_id=%s client_ip=%s method=%s endpoint=%s status=%s %s",
-                        request_id,
-                        client_ip,
-                        request.method,
-                        log_endpoint,
-                        response.status_code,
-                        domain_info,
-                    )
-            else:
-                _log_event(
-                    logging.INFO,
-                    json_mode=self.settings.structured_json_logs,
-                    logger_name=logger,
-                    event="request",
-                    request_id=request_id,
-                    client_ip=client_ip,
-                    method=request.method,
-                    endpoint=log_endpoint,
-                    status=response.status_code,
-                    domain_allowed=domain_allowed,
-                )
+            self._log_access_event(
+                request,
+                response,
+                request_id=request_id,
+                client_ip=client_ip,
+                log_endpoint=log_endpoint,
+            )
 
         return response
 
