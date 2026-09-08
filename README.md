@@ -67,7 +67,7 @@ flowchart LR
     D --> E["📄 XML or .mobileconfig\nresponse"]
 ```
 
-Every request is stateless: settings come straight from environment variables or a mounted YAML file, there's no mailbox-existence lookup anywhere in the flow, and an unknown *mailbox* in an allowed domain gets the exact same response shape as a real one — see [Security at a glance](#security-at-a-glance).
+Every request is stateless: settings come straight from environment variables or a mounted YAML file, and there's no mailbox-existence lookup anywhere in the flow — see [Security at a glance](#security-at-a-glance) for what that guarantees.
 
 ## Quick start
 
@@ -187,7 +187,6 @@ Prefer pinned tags or digests in production.
 ## Security at a glance
 
 - no mailbox enumeration — every syntactically valid address in an allowed domain gets the same response shape
-- no full email address logging
 - safe XML parsing (`defusedxml`)
 - bounded in-memory rate limiting
 - security headers enabled by default
