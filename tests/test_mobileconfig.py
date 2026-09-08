@@ -38,6 +38,15 @@ def test_mobileconfig_returns_plist_for_allowed_domain() -> None:
     assert "OutgoingPassword" not in mail
 
 
+def test_mobileconfig_missing_emailaddress() -> None:
+    settings = make_settings()
+    app = create_app(FixedSettingsProvider(settings))
+    with TestClient(app) as client:
+        response = client.get("/mail/ios.mobileconfig")
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid request"}
+
+
 def test_mobileconfig_unknown_domain_404() -> None:
     settings = make_settings()
     app = create_app(FixedSettingsProvider(settings))
