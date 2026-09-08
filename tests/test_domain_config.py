@@ -169,6 +169,53 @@ domains: {}
         make_settings(config_file=str(config_file))
 
 
+def test_invalid_yaml_syntax_raises_validation_error(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    _write_config(config_file, "domains: [unterminated")
+
+    with pytest.raises(ValidationError, match="not valid YAML"):
+        make_settings(config_file=str(config_file))
+
+
+def test_empty_config_file_raises_validation_error(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    _write_config(config_file, "")
+
+    with pytest.raises(ValidationError, match="is empty"):
+        make_settings(config_file=str(config_file))
+
+
+def test_config_file_directory_raises_validation_error(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="Unable to read CONFIG_FILE"):
+        make_settings(config_file=str(tmp_path))
+
+
+def test_yaml_empty_domain_key_raises_validation_error(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    _write_config(
+        config_file,
+        """
+domains:
+  " ":
+    display_name: Example Mail
+    display_short_name: Example
+    imap:
+      host: mail.example.com
+      port: 993
+      socket_type: SSL
+      authentication: password-cleartext
+    smtp:
+      host: mail.example.com
+      port: 587
+      socket_type: STARTTLS
+      authentication: password-cleartext
+""".strip(),
+    )
+
+    with pytest.raises(ValidationError, match="empty domain key"):
+        make_settings(config_file=str(config_file))
+
+
 def test_production_yaml_rejects_example_com_domain(tmp_path: Path) -> None:
     config_file = tmp_path / "config.yaml"
     _write_config(
