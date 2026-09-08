@@ -64,10 +64,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   convention rather than the more literal reading of the playbook doc. All content
   verified against the current repo (endpoints, env vars, compose files, doc links).
 - `SECURITY.md`'s flat "Built-in mitigations" list is now "Main risks and mitigations":
-  five named risks (XXE/XML bombs, request-body memory exhaustion, log injection,
-  client-IP spoofing, domain-list disclosure), each paired with the specific function
-  and file that mitigates it. Added "Supported versions" and a responsible-disclosure
-  commitment (coordinated disclosure, researcher credit) to "Vulnerability disclosure".
+  four named risks (XXE/XML bombs, oversized-request-body memory exhaustion, log
+  injection, client-IP spoofing), each paired with the specific function and file
+  that mitigates it, plus an explicit "Domain membership is observable — mailbox
+  existence is not" section correcting an earlier draft that implied domain
+  probing was also defended against (it isn't; only mailbox enumeration within an
+  already-allowed domain is). Also corrects the XXE description (`defusedxml`
+  blocks entity definitions and external references by default, not DTDs
+  themselves) and drops an inaccurate "slow-drip" mitigation claim from the
+  body-size section, pointing instead at reverse-proxy read timeouts for that.
+  Added "Supported versions" and a responsible-disclosure commitment (coordinated
+  disclosure, researcher credit) to "Vulnerability disclosure".
 
 ### Fixed
 

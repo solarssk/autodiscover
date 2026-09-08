@@ -67,13 +67,15 @@ There is no admin API in the current version. Configuration comes from environme
 
 **Risk:** `POST /autodiscover/autodiscover.xml` accepts an attacker-controlled XML body. A crafted payload with external entity references or nested entity expansion (billion laughs) could try to read local files or exhaust memory during parsing.
 
-**Mitigation:** `parse_outlook_email_address()` (`app/security.py`) parses with `defusedxml.ElementTree.fromstring`, which refuses external entities and DTDs outright. A malicious payload fails to parse and is treated as "no email address found," not executed.
+**Mitigation:** `parse_outlook_email_address()` (`app/security.py`) parses with `defusedxml.ElementTree.fromstring`, called with its default arguments: `forbid_entities=True` and `forbid_external=True` reject entity definitions and external references — the actual XXE and entity-expansion vectors — regardless of `forbid_dtd` (which defaults to `False`, so a bare, entity-free DTD is not itself refused). A payload using either vector fails to parse and is treated as "no email address found," not executed.
 
-### Memory exhaustion via an oversized or slow-drip request body
+### Memory exhaustion via an oversized request body
 
-**Risk:** A very large or deliberately slow POST body to the Outlook endpoint could be used to hold a worker's memory or a connection open.
+**Risk:** A very large POST body to the Outlook endpoint could be used to exhaust a worker's memory.
 
 **Mitigation:** the request body is read via `request.stream()` and checked against `MAX_REQUEST_BODY_BYTES` on every chunk, rejecting with `413` the instant the limit is crossed — never buffering the full body first to decide.
+
+**Not mitigated here:** a body sent slowly, one byte at a time, stays under the size cap indefinitely — this code has no read deadline of its own. Guard against slow-drip / slowloris-style requests with a read timeout at the reverse proxy in front of the service (see `docs/reverse-proxy/`).
 
 ### Log injection via request metadata
 
@@ -87,11 +89,11 @@ There is no admin API in the current version. Configuration comes from environme
 
 **Mitigation:** `get_client_ip()` only honors these headers when the immediate TCP peer is inside `TRUSTED_PROXY_IPS`, and even then parses `X-Forwarded-For` right-to-left, skipping hops that are themselves trusted proxies. `TRUST_PROXY_HEADERS` defaults to `false`.
 
-### Domain-list disclosure via error responses
+### Domain membership is observable — mailbox existence is not
 
-**Risk:** Probing with random domains could reveal which domains are actually configured, if the "wrong domain" case looked any different from the "right domain, made-up mailbox" case.
+The guarantee under "Core security property" above is scoped to mailboxes *within* an allowed domain; it does not extend to hiding which domains are configured at all. A request for a domain this server doesn't handle reaches `_domain_error_response()` and returns 404 or 400 (per `RETURN_404_FOR_UNKNOWN_DOMAIN`), while any syntactically valid mailbox in a configured domain returns a successful configuration regardless of whether that specific mailbox exists. Probing a list of candidate domains against this server can therefore reveal which ones it serves — that's an inherent consequence of the server correctly declining domains it doesn't handle, not something a response-shape mitigation can close. The landing page at least never lists configured domains outright, so it doesn't hand that list over for free.
 
-**Mitigation:** `_domain_error_response()` returns the exact same response (configurable via `RETURN_404_FOR_UNKNOWN_DOMAIN`) for both, and the landing page never lists configured domains.
+Don't rely on domain membership being hidden. If that matters for your deployment, restrict network access to this service rather than expecting the response shape to hide it.
 
 ### Everything else
 
