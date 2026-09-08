@@ -33,8 +33,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - Published images are now also mirrored to **Docker Hub** (`docker.io/solarssk/mail-autodiscover`)
   alongside GHCR. `docker-publish.yml` copies the already-built, already-scanned GHCR
   manifest into Docker Hub by digest — never a second build — so both registries always
-  carry byte-identical images with identical Trivy results. Added `docker-compose.dockerhub.yml`
-  as a Docker-Hub equivalent of the existing `docker-compose.ghcr.yml`.
+  carry byte-identical images with identical Trivy results. `latest` is now enabled only
+  for `main` pushes (previously also a clean version tag): main pushes are already
+  serialized against each other, but a tag push runs in its own concurrency group fully
+  parallel to any in-flight main push, so both being eligible to write `latest` in two
+  registries each could interleave and leave GHCR and Docker Hub's `latest` pointing at
+  different digests. The release process always tags a commit already pushed to `main`,
+  so `main`'s own run has already published `latest` for that content by the time the tag
+  exists. Added `docker-compose.dockerhub.yml` as a Docker-Hub equivalent of the existing
+  `docker-compose.ghcr.yml`.
 
 ### Changed
 
