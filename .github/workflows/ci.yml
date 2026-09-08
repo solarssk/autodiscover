@@ -160,6 +160,42 @@ jobs:
       - run: pip-audit
       - run: deptry .
 
+  dependency-lock:
+    name: Verify requirements.txt matches pyproject.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      # Must match the Dockerfile's base image Python version (3.14), not the
+      # 3.12 used elsewhere in this file for running dev tools: pip-compile
+      # resolves environment-marker-conditional transitive dependencies using
+      # the interpreter it runs under, so a different Python version here can
+      # reproduce a spuriously different lockfile even when pyproject.toml
+      # hasn't changed.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+      # Pinned exactly (unlike pyproject.toml's own pip-tools>=7.4.0 floor for
+      # local dev use): pip-tools has a header-rendering bug where an unset
+      # --no-index defaults to a sentinel that never compares equal to its own
+      # False default, so it always echoes "--no-index" into the generated
+      # file's header regardless of whether the index was actually used.
+      # Harmless today (deterministic per pip-tools version), but an unpinned
+      # future pip-tools release changing that rendering could shift the
+      # header and break the diff below for a reason unrelated to any real
+      # dependency change.
+      - run: pip install "pip-tools==7.6.1"
+      # pip-compile keeps existing pins from requirements.txt when they still
+      # satisfy pyproject.toml, so re-running it without --upgrade reproduces
+      # the same file unless pyproject.toml's own constraints changed without
+      # regenerating the lock to match.
+      - name: Verify requirements.txt matches pyproject.toml
+        run: |
+          pip-compile --generate-hashes --allow-unsafe -o requirements.txt pyproject.toml
+          git diff --exit-code requirements.txt
+
   docker:
     name: Docker build and scan
     runs-on: ubuntu-latest

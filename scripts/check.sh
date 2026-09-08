@@ -13,6 +13,7 @@ if [[ -x "${ROOT}/.venv/bin/python" ]]; then
   BANDIT="${ROOT}/.venv/bin/bandit"
   PIP_AUDIT="${ROOT}/.venv/bin/pip-audit"
   DEPTRY="${ROOT}/.venv/bin/deptry"
+  PIP_COMPILE="${ROOT}/.venv/bin/pip-compile"
 else
   PYTHON="python3"
   RUFF="ruff"
@@ -21,6 +22,7 @@ else
   BANDIT="bandit"
   PIP_AUDIT="pip-audit"
   DEPTRY="deptry"
+  PIP_COMPILE="pip-compile"
 fi
 
 echo "==> ruff"
@@ -34,6 +36,14 @@ echo "==> mypy"
 
 echo "==> bandit"
 "$BANDIT" -r app -ll -c pyproject.toml
+
+echo "==> requirements.txt (pip-compile drift check)"
+# CI regenerates this under Python 3.14 specifically (matching the Dockerfile's
+# base image); if your local .venv is a different Python version, pip-compile
+# can resolve marker-conditional dependencies differently and report a diff
+# here that CI wouldn't actually see, or vice versa.
+"$PIP_COMPILE" --generate-hashes --allow-unsafe -o requirements.txt pyproject.toml
+git diff --exit-code requirements.txt
 
 if [[ "${SKIP_PIP_AUDIT:-}" != "1" ]]; then
   echo "==> pip-audit"

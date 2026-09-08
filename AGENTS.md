@@ -115,3 +115,9 @@ ENV-based `ALLOWED_DOMAINS`/`IMAP_*`/`SMTP_*` values are ignored for routing.
   when discussing multi-worker deployments.
 - **XML escaping uses `html.escape(..., quote=False)`**, not `xml.sax.saxutils.escape`.
   Keep it that way (Bandit B406).
+- **Runtime dependencies are locked in `requirements.txt`** (hash-pinned, generated with
+  `pip-compile`). If you change `[project.dependencies]` in `pyproject.toml`, regenerate
+  it under Python 3.14 (matching the Dockerfile's base image, not this repo's usual 3.12
+  dev-tooling version — `pip-compile` resolves marker-conditional dependencies using
+  whatever interpreter runs it): `pip-compile --generate-hashes --allow-unsafe -o
+  requirements.txt pyproject.toml`. CI fails if the two drift apart.

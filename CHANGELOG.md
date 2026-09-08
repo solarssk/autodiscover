@@ -8,6 +8,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `requirements.txt`: hash-pinned lockfile for runtime dependencies, generated with
+  `pip-compile`. The Docker image now installs from this instead of resolving
+  `pyproject.toml`'s `>=` bounds fresh on every build, so the exact same dependency
+  versions and artifacts ship every time. CI fails if it drifts from `pyproject.toml`.
 - `CODE_OF_CONDUCT.md`.
 - `.coderabbit.yaml`: automatic CodeRabbit review is off; trigger one on demand by
   commenting `@coderabbitai review` on a PR. Matches the same setting already used in

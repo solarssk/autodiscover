@@ -13,15 +13,21 @@ RUN apt-get update \
     && addgroup --system app \
     && adduser --system --ingroup app app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements.txt ./
 COPY app ./app
 # app/static includes favicon.ico and apple-touch-icon.png
+# Runtime dependencies install from the hash-pinned lockfile (requirements.txt,
+# regenerated with `pip-compile --generate-hashes`; see CONTRIBUTING.md) so the
+# exact same versions and artifacts get installed on every build, not whatever
+# happens to satisfy the >= bounds in pyproject.toml on a given day. The app
+# itself installs with --no-deps since its dependencies are already locked.
 # pip is removed after install: the app runs via uvicorn and never invokes pip
 # at runtime, and pip vendors its own copies of packages like msgpack and
 # pkg_resources/setuptools that periodically pick up CVEs of their own
 # (unrelated to anything this app actually uses) if left in the shipped image.
 RUN pip install --no-cache-dir --upgrade "pip>=26.1.2" \
-    && pip install --no-cache-dir . \
+    && pip install --no-cache-dir --require-hashes -r requirements.txt \
+    && pip install --no-cache-dir --no-deps . \
     && pip uninstall -y pip
 
 USER app
