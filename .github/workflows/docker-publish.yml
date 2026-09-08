@@ -31,6 +31,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  DOCKERHUB_IMAGE: docker.io/${{ github.repository }}
 
 jobs:
   publish:
@@ -55,6 +56,15 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # DOCKERHUB_TOKEN is a Docker Hub access token (Account Settings ->
+      # Security), not the account password. Same discipline as GITHUB_TOKEN
+      # above: scoped, revocable, never the real credential.
+      - name: Log in to Docker Hub
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
@@ -195,17 +205,41 @@ jobs:
 
       # Only reached once both platforms' gates above passed. Composes the
       # real, user-visible tags (latest, version tags, ...) directly from the
-      # two already-scanned digests — never a rebuild.
-      - name: Create and push multi-arch manifest
+      # two already-scanned digests — never a rebuild. --metadata-file
+      # captures the merged manifest's own digest so the Docker Hub copy
+      # below has a stable, precise reference instead of re-reading a
+      # floating tag that a concurrent run could have already moved.
+      - name: Create and push multi-arch manifest (GHCR)
+        id: manifest
         run: |
           set -euo pipefail
           tag_args=()
           while IFS= read -r tag; do
             [ -n "$tag" ] && tag_args+=(--tag "$tag")
           done <<< "${{ steps.meta.outputs.tags }}"
-          docker buildx imagetools create "${tag_args[@]}" \
+          docker buildx imagetools create --metadata-file manifest.json "${tag_args[@]}" \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}" \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}"
+          digest="$(jq -r '."containerimage.descriptor".digest // empty' manifest.json)"
+          [ -n "$digest" ] || { echo "::error::could not resolve merged manifest digest from metadata file"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # Docker Hub is never a build target: BuildKit's image exporter takes
+      # one `name=` per invocation, so a second registry can't be fanned out
+      # to from the per-platform builds above without building twice. This
+      # is a registry-to-registry copy of the exact manifest GHCR just
+      # received (same digest, same scan results — nothing rebuilt), with
+      # tags derived by swapping the registry host only; the image path
+      # (owner/repo) is identical in both registries.
+      - name: Copy manifest to Docker Hub
+        run: |
+          set -euo pipefail
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && tag_args+=(--tag "${tag/ghcr.io/docker.io}")
+          done <<< "${{ steps.meta.outputs.tags }}"
+          docker buildx imagetools create "${tag_args[@]}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.manifest.outputs.digest }}"
 
       # release.yml also triggers on this same tag push and creates the
       # GitHub Release independently; wait for it rather than assuming it

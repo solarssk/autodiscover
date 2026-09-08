@@ -69,8 +69,10 @@ practical benefit.
 
 `docker-publish.yml` additionally builds each published platform (`linux/amd64`,
 `linux/arm64`) once, pushes it by digest, and scans and gates that exact digest on
-fixable CRITICAL before the real `latest`/version tags are ever created from it. A
-CycloneDX SBOM per platform is attached to the GitHub Release on version tags. See
+fixable CRITICAL before the real `latest`/version tags are ever created from it. The
+resulting manifest is published to GHCR, then copied by digest to Docker Hub — never
+rebuilt, so both registries carry the exact same scanned image. A CycloneDX SBOM per
+platform is attached to the GitHub Release on version tags. See
 [SECURITY.md](SECURITY.md#security-controls--ci) for the full control-to-workflow mapping.
 
 ## Labels
@@ -95,7 +97,7 @@ Use labels to classify issues and PRs:
 
 - Merge **all** open PRs (including Dependabot) before cutting a release.
 - Update `CHANGELOG.md` and `pyproject.toml` version on `main` via PR.
-- Images are published to **GHCR** on every push to `main` and on version tags `v*`.
+- Images are published to **GHCR and Docker Hub** on every push to `main` and on version tags `v*`.
 
 Keep the audience in mind:
 

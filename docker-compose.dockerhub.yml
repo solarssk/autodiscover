@@ -1,0 +1,58 @@
+# Example stack for Portainer / Docker Compose using the pre-built Docker Hub image.
+# Values below are interpolated from .env or from your Portainer environment settings.
+# Copy .env.example to .env and set TRUSTED_PROXY_IPS for your proxy/Docker CIDRs.
+# IMAGE_TAG defaults to the current release tag. Override in .env or Portainer if needed.
+
+services:
+  mail-autodiscover:
+    image: docker.io/solarssk/mail-autodiscover:${IMAGE_TAG:-0.3.3}
+    container_name: ${CONTAINER_NAME:-mail-autodiscover}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8088}:${CONTAINER_PORT:-8000}"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\\\"CONTAINER_PORT\\\", \\\"8000\\\")}/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    environment:
+      APP_NAME: ${APP_NAME:-mail-autodiscover}
+      APP_ENV: ${APP_ENV:-production}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://autodiscover.example.com}
+      CONFIG_FILE: ${CONFIG_FILE:-/config/config.yaml}
+      ALLOWED_DOMAINS: ${ALLOWED_DOMAINS:-example.com}
+      MAIL_DISPLAY_NAME: ${MAIL_DISPLAY_NAME:-Example Mail}
+      MAIL_DISPLAY_SHORT_NAME: ${MAIL_DISPLAY_SHORT_NAME:-Example}
+      IMAP_HOST: ${IMAP_HOST:-mail.example.com}
+      IMAP_PORT: "${IMAP_PORT:-993}"
+      IMAP_SOCKET_TYPE: ${IMAP_SOCKET_TYPE:-SSL}
+      IMAP_AUTHENTICATION: ${IMAP_AUTHENTICATION:-password-cleartext}
+      SMTP_HOST: ${SMTP_HOST:-mail.example.com}
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_SOCKET_TYPE: ${SMTP_SOCKET_TYPE:-STARTTLS}
+      SMTP_AUTHENTICATION: ${SMTP_AUTHENTICATION:-password-cleartext}
+      USERNAME_FORMAT: ${USERNAME_FORMAT:-email}
+      CONTAINER_PORT: "${CONTAINER_PORT:-8000}"
+      TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-}
+      ACCESS_LOG_SKIP_PATHS: ${ACCESS_LOG_SKIP_PATHS:-/health,/ready,/favicon.ico,/apple-touch-icon.png}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      STRUCTURED_JSON_LOGS: "${STRUCTURED_JSON_LOGS:-false}"
+      MAX_REQUEST_BODY_BYTES: "${MAX_REQUEST_BODY_BYTES:-16384}"
+      RATE_LIMIT_ENABLED: "${RATE_LIMIT_ENABLED:-true}"
+      RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-60}"
+      RATE_LIMIT_MAX_CLIENTS: "${RATE_LIMIT_MAX_CLIENTS:-10000}"
+      RATE_LIMIT_CLEANUP_INTERVAL_SECONDS: "${RATE_LIMIT_CLEANUP_INTERVAL_SECONDS:-300}"
+      SECURITY_HEADERS_ENABLED: "${SECURITY_HEADERS_ENABLED:-true}"
+      OUTLOOK_ENABLED: "${OUTLOOK_ENABLED:-true}"
+      THUNDERBIRD_ENABLED: "${THUNDERBIRD_ENABLED:-true}"
+      APPLE_MOBILECONFIG_ENABLED: "${APPLE_MOBILECONFIG_ENABLED:-true}"
+      POP3_ENABLED: "${POP3_ENABLED:-false}"
+      POP3_HOST: ${POP3_HOST:-mail.example.com}
+      POP3_PORT: "${POP3_PORT:-995}"
+      POP3_SOCKET_TYPE: ${POP3_SOCKET_TYPE:-SSL}
+      POP3_AUTHENTICATION: ${POP3_AUTHENTICATION:-password-cleartext}
+      RETURN_404_FOR_UNKNOWN_DOMAIN: "${RETURN_404_FOR_UNKNOWN_DOMAIN:-true}"
+      DISABLE_ACCESS_LOG: "${DISABLE_ACCESS_LOG:-false}"
+    volumes:
+      - ./config:/config:ro

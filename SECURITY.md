@@ -114,6 +114,7 @@ Don't rely on domain membership being hidden. If that matters for your deploymen
 | Trivy (pre-merge) | Container image scan; blocks on HIGH/CRITICAL on PRs, advisory SARIF upload only on push to `main` | Every push and PR | `.github/workflows/ci.yml` (`docker`) |
 | Trivy (pre-publish) | Container image scan of the actual image about to be pushed, gates on fixable HIGH/CRITICAL | Push to `main` and version tags | `.github/workflows/docker-publish.yml` |
 | CycloneDX SBOM | Software bill of materials for the published image | Version tags, attached to the GitHub Release | `.github/workflows/docker-publish.yml` |
+| Docker Hub publish | Registry-to-registry copy of the exact, already-scanned GHCR manifest by digest — never a separate build, so the same scan results apply to both registries | Push to `main` and version tags | `.github/workflows/docker-publish.yml` |
 | Dependabot | Dependency and GitHub Actions update PRs | Weekly | `.github/dependabot.yml` |
 | Documentation-impact check | PR's declared doc-update checkbox verified against the actual diff | Every non-Dependabot PR | `.github/workflows/ci.yml` (`docs-impact`) |
 | Codecov | Coverage report and patch-coverage signal (not yet a merge gate) | Every push and PR | `.github/workflows/ci.yml` (`test`) |
@@ -131,7 +132,7 @@ removed, rather than leaving a stale entry.
 3. Set `TRUSTED_PROXY_IPS` or `FORWARDED_ALLOW_IPS` to your own proxy or Docker bridge CIDRs.
 4. Keep `ALLOWED_DOMAINS` limited to domains you actually operate.
 5. Do not expose the container directly to the public internet without TLS.
-6. In production, pin GHCR images by semver tag or digest instead of using `latest`.
+6. In production, pin images (GHCR or Docker Hub — same digest, same scan results) by semver tag or digest instead of using `latest`.
 7. With `APP_ENV=production`, the service refuses to start on placeholder values (`example.com`, `mail.example.com`, `http://localhost`, missing `TRUSTED_PROXY_IPS` when proxy trust is on).
 8. **Do not run multiple uvicorn workers** (`--workers N` or Gunicorn multi-process) without an external rate-limiter. The built-in rate limiter is in-process only; with N workers the effective per-IP limit becomes `N × RATE_LIMIT_PER_MINUTE`.
 

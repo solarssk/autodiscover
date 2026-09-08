@@ -30,6 +30,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   workflow on every push and PR, mechanically checking this repo against its own declared
   Tier 2 checklist (SHA-pinning, `SECURITY.md`, issue templates, `concurrency:` blocks, and
   more). Same setup already used by `ssf-transmitter`.
+- Published images are now also mirrored to **Docker Hub** (`docker.io/solarssk/mail-autodiscover`)
+  alongside GHCR. `docker-publish.yml` copies the already-built, already-scanned GHCR
+  manifest into Docker Hub by digest — never a second build — so both registries always
+  carry byte-identical images with identical Trivy results. Added `docker-compose.dockerhub.yml`
+  as a Docker-Hub equivalent of the existing `docker-compose.ghcr.yml`.
 
 ### Changed
 
