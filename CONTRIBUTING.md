@@ -41,7 +41,9 @@ installed on every build instead of whatever happens to satisfy the `>=` bounds 
 `pyproject.toml` on a given day.
 
 Whenever you add, remove, or change a runtime dependency, regenerate the lockfile in the
-same PR:
+same PR, using Python 3.14 (matching the Dockerfile's base image — `pip-compile` resolves
+marker-conditional dependencies using whatever interpreter runs it, and CI regenerates
+under 3.14 too):
 
 ```bash
 pip-compile --generate-hashes --allow-unsafe -o requirements.txt pyproject.toml

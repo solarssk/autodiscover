@@ -177,7 +177,16 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-      - run: pip install pip-tools
+      # Pinned exactly (unlike pyproject.toml's own pip-tools>=7.4.0 floor for
+      # local dev use): pip-tools has a header-rendering bug where an unset
+      # --no-index defaults to a sentinel that never compares equal to its own
+      # False default, so it always echoes "--no-index" into the generated
+      # file's header regardless of whether the index was actually used.
+      # Harmless today (deterministic per pip-tools version), but an unpinned
+      # future pip-tools release changing that rendering could shift the
+      # header and break the diff below for a reason unrelated to any real
+      # dependency change.
+      - run: pip install "pip-tools==7.6.1"
       # pip-compile keeps existing pins from requirements.txt when they still
       # satisfy pyproject.toml, so re-running it without --upgrade reproduces
       # the same file unless pyproject.toml's own constraints changed without
