@@ -1,115 +1,36 @@
 # CLAUDE.md — project context for Claude Code
 
-## What this project is
+@AGENTS.md
 
-`mail-autodiscover` is a stateless FastAPI service that returns mail client configuration
-(IMAP/SMTP/POP3) for allowed domains. It serves three autodiscovery protocols:
+Rules below are **Claude Code–specific**. Shared project context (stack, layout, release
+process, the mailbox-enumeration invariant) lives in `AGENTS.md` — do not duplicate it here.
 
-- **Outlook Autodiscover** — `POST /autodiscover/autodiscover.xml`
-- **Thunderbird Autoconfig** — `GET /mail/config-v1.1.xml`
-- **Apple Mail profile** — `GET /mail/ios.mobileconfig`
+## 1. Verify, don't assume
 
-There is no database, no admin panel, no mailbox existence check, and no LDAP integration.
-Keep it that way.
+Read the actual file before describing what it does. `config.py`'s production-startup
+validation, the rate limiter's in-process scope, and the exact set of public endpoints are
+all things a plausible-sounding guess gets wrong. Ground every claim in this repo's current
+state, not in what a similar FastAPI service usually looks like.
 
-## Critical security invariant — never break this
+## 2. Simplicity first
 
-The service must return **the same response shape** for every syntactically valid address in an
-allowed domain, regardless of whether the mailbox actually exists. Any code path that reveals
-whether `alice@example.com` exists while `bob@example.com` does not is a bug.
+Minimum code that solves the problem, nothing speculative. No abstractions for single-use
+code, no error handling for scenarios that cannot happen, no new dependency for something
+the standard library already does. If a change adds a database, a queue, or a new external
+call, that's a sign it no longer fits this project — say so instead of building it.
 
-## Tech stack
+## 3. Surgical changes
 
-| Layer | Choice |
-|-------|--------|
-| Framework | FastAPI |
-| Config | `pydantic-settings` (ENV or YAML via `CONFIG_FILE`) |
-| XML parsing | `defusedxml` (safe) |
-| XML escaping | `html.escape(..., quote=False)` |
-| YAML | `PyYAML` |
-| Server | `uvicorn[standard]` |
-| Python | ≥ 3.12 |
+Touch only what the task requires. Don't "improve" adjacent code while fixing something
+else, and match existing style. Every changed line should trace directly back to the task.
 
-## Project layout
+## 4. You prepare; the user decides and merges
 
-```
-app/
-  main.py          # FastAPI app factory + all routes
-  config.py        # Settings, DomainMailSettings, YAML loader
-  security.py      # SecurityMiddleware, rate limiter, logging, header sanitisation
-  templates.py     # Outlook XML and Thunderbird XML builders
-  mobileconfig.py  # Apple Mail .mobileconfig builder
-  email_utils.py   # Email validation
-  landing.py       # Landing page HTML and robots.txt
-  static/          # favicon.ico, apple-touch-icon.png
-config/
-  config.example.yaml   # Multi-domain YAML example
-docs/              # Reverse-proxy, DNS, client, and troubleshooting guides
-scripts/
-  check.sh                  # Local CI mirror
-  format_release_notes.py   # Formats CHANGELOG entry into GitHub release body
-tests/             # pytest — ≥ 90 % coverage on app/ is enforced
-```
+No `--no-verify` on commits — pre-commit hooks enforce code quality and exist for a reason.
+Propose the change, run `./scripts/check.sh`, and let CI and the maintainer confirm it before
+it lands on `main`.
 
-## Local development
+## 5. Compounding engineering
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install ".[dev]"
-pre-commit install
-cp .env.example .env          # set APP_ENV=development
-uvicorn app.main:app --reload
-```
-
-Set `APP_ENV=development` or `APP_ENV=test` to bypass production-only startup validation.
-
-## Running checks
-
-```bash
-./scripts/check.sh                        # full CI mirror (ruff, mypy, pytest, bandit, etc.)
-SKIP_PIP_AUDIT=1 SKIP_DEPTRY=1 ./scripts/check.sh  # skip slower scans
-pytest                                    # tests only
-```
-
-`pre-commit install` makes `ruff`, `mypy`, and `pytest` run automatically before each commit.
-
-## Configuration modes
-
-**Single-domain (ENV):** set `ALLOWED_DOMAINS`, `IMAP_HOST`, `SMTP_HOST`, etc. in `.env`.
-
-**Multi-domain (YAML):** set `CONFIG_FILE=/config/config.yaml` and mount a YAML file that
-follows the shape in `config/config.example.yaml`. When `CONFIG_FILE` exists and is valid,
-ENV-based `ALLOWED_DOMAINS`/`IMAP_*`/`SMTP_*` values are ignored for routing.
-
-`USERNAME_FORMAT` is always read from ENV, even in YAML mode.
-
-## Release process
-
-1. Bump `version` in `pyproject.toml`.
-2. Add a `## [X.Y.Z] - YYYY-MM-DD` entry in `CHANGELOG.md` following the hybrid format
-   described in `CONTRIBUTING.md` (narrative sections first, then KaC technical sections).
-3. Update the version comparison links at the bottom of `CHANGELOG.md`:
-   each `[VERSION]` must link to `compare/vPREV...vVERSION`.
-4. Open a PR, merge to `main`.
-5. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-   The Release workflow reads `CHANGELOG.md` and publishes formatted notes automatically.
-
-Preview release notes locally:
-
-```bash
-python scripts/format_release_notes.py vX.Y.Z
-```
-
-## Things to be careful about
-
-- **No `--no-verify` on commits** — pre-commit hooks enforce code quality.
-- **Never log full email addresses** — `security.py` intentionally logs only domain hashes.
-- **Proxy header trust is off by default** (`TRUST_PROXY_HEADERS=false`). Do not change the
-  default.
-- **Production startup validation** in `config.py` rejects placeholder values and unsafe proxy
-  settings — do not weaken it.
-- **Rate limiter is in-process** — one counter per uvicorn worker. Document this limitation
-  when discussing multi-worker deployments.
-- **XML escaping uses `html.escape(..., quote=False)`**, not `xml.sax.saxutils.escape`.
-  Keep it that way (Bandit B406).
+When a mistake in this repo trips you up, fix the root cause and update `AGENTS.md` (or this
+file, for Claude-only workflow notes) so the next session doesn't repeat it.
