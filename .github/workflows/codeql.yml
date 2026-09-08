@@ -38,7 +38,7 @@ jobs:
           queries: security-extended
           config-file: ./.github/codeql/codeql-config.yml
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         if: matrix.language == 'python'
         with:
           python-version: "3.12"
