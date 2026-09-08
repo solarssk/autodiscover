@@ -85,7 +85,22 @@ jobs:
       # silently breaking the same-image guarantee this workflow otherwise
       # provides. main's own run has already published `latest` and
       # `sha-<short>` for that exact commit by the time the tag exists, so
-      # the tag push only needs to add its own `vX.Y.Z`/`X.Y` tags.
+      # the tag push only needs to add its own version tag.
+      #
+      # Deliberately no `{{major}}.{{minor}}` floating tag: two *different*
+      # patch releases in the same minor series (v1.2.3, then v1.2.4) are
+      # two different immutable tags, each with its own concurrency group,
+      # so nothing serializes them against each other either. Both would
+      # write the same "1.2" tag name from genuinely different, both-correct
+      # digests, and their GHCR/Docker-Hub writes could interleave the same
+      # way. Unlike `latest`/`sha-*` above, there's no single "already
+      # serialized" run to defer to here — the fix would have to serialize
+      # all version-tag pushes into one concurrency group, which reintroduces
+      # exactly the silent-eviction failure mode the top-of-file comment
+      # already rejected (a third tag arriving mid-build would drop a
+      # queued release's image and SBOM entirely, with no error). Precise
+      # per-version tags (`{{version}}`, below) are immune to this by
+      # construction: no two different releases ever share one.
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9  # v6.1.0
@@ -95,7 +110,6 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,format=short,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
 
       # Each platform is built exactly once, pushed by digest (unreferenced by
       # any tag yet), and that same digest is what gets scanned below. The

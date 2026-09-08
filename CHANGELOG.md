@@ -46,7 +46,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   produce the same digest, so the same cross-registry interleaving risk applied there too.
   Added `docker-compose.dockerhub.yml` as a Docker-Hub equivalent of the existing
   `docker-compose.ghcr.yml`, defaulting to `latest` rather than a pinned version for now,
-  since no version tag has been published to Docker Hub yet.
+  since no version tag has been published to Docker Hub yet. Also dropped the
+  `{{major}}.{{minor}}` floating tag (e.g. `1.2`) entirely: two different patch releases in
+  the same minor series are two different immutable tags with their own concurrency
+  groups, so nothing serializes them against each other, and both would write the same
+  "1.2" name from genuinely different, both-correct digests — the identical
+  cross-registry interleaving risk as above, but with no single already-serialized run to
+  defer to this time. Serializing all version-tag pushes into one group to fix it would
+  reintroduce the silent-eviction failure mode already rejected at the top of this file
+  (a third tag arriving mid-build would drop a queued release's image and SBOM entirely).
+  The precise per-version tag is immune to this by construction, since no two releases
+  ever share one.
 
 ### Changed
 
