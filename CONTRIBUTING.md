@@ -31,6 +31,27 @@ All changes to `main` must go through a **pull request**. Direct pushes to `main
 6. Wait for all CI checks to pass.
 7. Merge when ready (squash merge is fine).
 
+## Dependencies
+
+Runtime dependencies (`[project.dependencies]` in `pyproject.toml`) are locked in
+`requirements.txt`, a hash-pinned file generated with `pip-compile`. This is what the
+Docker image actually installs from, so the exact same versions and artifacts get
+installed on every build instead of whatever happens to satisfy the `>=` bounds in
+`pyproject.toml` on a given day.
+
+Whenever you add, remove, or change a runtime dependency, regenerate the lockfile in the
+same PR:
+
+```bash
+pip-compile --generate-hashes --allow-unsafe -o requirements.txt pyproject.toml
+```
+
+CI fails the PR if `requirements.txt` doesn't match what regenerating it produces, so
+this can't be forgotten silently. Dev-only tools
+(`[project.optional-dependencies].dev`) are deliberately not locked: they never ship in
+the container, and locking them too would double the maintenance surface for little
+practical benefit.
+
 ## CI checks
 
 | Check | What it does |

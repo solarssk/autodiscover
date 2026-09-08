@@ -159,6 +159,14 @@ jobs:
       - run: bandit -r app -ll -c pyproject.toml
       - run: pip-audit
       - run: deptry .
+      # pip-compile keeps existing pins from requirements.txt when they still
+      # satisfy pyproject.toml, so re-running it without --upgrade reproduces
+      # the same file unless pyproject.toml's own constraints changed without
+      # regenerating the lock to match.
+      - name: Verify requirements.txt matches pyproject.toml
+        run: |
+          pip-compile --generate-hashes --allow-unsafe -o requirements.txt pyproject.toml
+          git diff --exit-code requirements.txt
 
   docker:
     name: Docker build and scan
