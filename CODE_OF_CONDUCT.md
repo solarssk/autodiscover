@@ -20,10 +20,17 @@ requests, code review comments, and discussions.
 
 ## Reporting
 
-If something crosses the line, reach **@solarssk** on GitHub (a private message
-or a note on the relevant issue/PR works) or use GitHub's
-[Report abuse](https://github.com/contact/report-abuse) form for anything that
-needs GitHub's own moderation. Reports are handled privately.
+GitHub has no general private-messaging feature between users, and a comment on an
+issue or PR is public, so use a channel that's actually private:
+
+- **Preferred**: open a [private security advisory](https://github.com/solarssk/mail-autodiscover/security/advisories/new).
+  It's not just for vulnerabilities — it's the one channel on this repo that reaches
+  **@solarssk** directly and stays visible only to the two of you, which is what
+  matters for a conduct report, especially one about another participant.
+- For anything that needs GitHub's own moderation (not just this project's), use
+  GitHub's [Report abuse](https://github.com/contact/report-abuse) form. That goes to
+  GitHub Trust & Safety, not the maintainer, so use it alongside a report here, not
+  instead of one.
 
 ## Enforcement
 
