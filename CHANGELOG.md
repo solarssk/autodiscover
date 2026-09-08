@@ -51,6 +51,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   into `_log_access_event()`, and the log-sanitizer regex's character class no longer
   duplicates `\t\n\v\f\r` between an explicit range and `\s` (same matched character set,
   verified against the full BMP). Lower Cognitive Complexity, same logging output.
+- `README.md` rewritten to match the house style used across `solarssk` repos
+  (`ssf-transmitter` as the closest peer): centered badge row (adds Codecov and
+  SonarCloud Quality Gate badges) and platform badge ahead of the description, a
+  collapsed table of contents, a Mermaid "How it works" diagram, and an emoji-tagged
+  Documentation table. Badges now sit before the description again, reversing the
+  earlier "badges after description" change to match the actually-practiced sibling-repo
+  convention rather than the more literal reading of the playbook doc. All content
+  verified against the current repo (endpoints, env vars, compose files, doc links).
 
 ### Fixed
 
