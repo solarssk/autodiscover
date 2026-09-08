@@ -16,8 +16,13 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY app ./app
 # app/static includes favicon.ico and apple-touch-icon.png
+# pip is removed after install: the app runs via uvicorn and never invokes pip
+# at runtime, and pip vendors its own copies of packages like msgpack and
+# pkg_resources/setuptools that periodically pick up CVEs of their own
+# (unrelated to anything this app actually uses) if left in the shipped image.
 RUN pip install --no-cache-dir --upgrade "pip>=26.1.2" \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir . \
+    && pip uninstall -y pip
 
 USER app
 
