@@ -51,7 +51,7 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "--cov=app --cov-report=term-missing --cov-fail-under=90"
+addopts = "--cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=90"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.coverage.run]

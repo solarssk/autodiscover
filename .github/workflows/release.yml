@@ -4,6 +4,16 @@ on:
   push:
     tags: ["v*"]
 
+# Grouped per ref (per tag), not per repository, for the same reason as
+# docker-publish.yml: a repo-wide group only holds one pending run, so a
+# third tag pushed while an earlier tag's release is still running would
+# silently evict the middle tag's queued run. That tag would then never get
+# a GitHub Release, and docker-publish.yml's SBOM-attach step (which polls
+# for this workflow's release to exist) would time out waiting for it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -14,7 +24,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
 
@@ -30,7 +40,7 @@ jobs:
           echo "path=/tmp/release-notes.md" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v3.0.1
         with:
           body_path: /tmp/release-notes.md
           prerelease: ${{ contains(github.ref_name, '-') }}
