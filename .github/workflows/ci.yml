@@ -159,6 +159,25 @@ jobs:
       - run: bandit -r app -ll -c pyproject.toml
       - run: pip-audit
       - run: deptry .
+
+  dependency-lock:
+    name: Verify requirements.txt matches pyproject.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      # Must match the Dockerfile's base image Python version (3.14), not the
+      # 3.12 used elsewhere in this file for running dev tools: pip-compile
+      # resolves environment-marker-conditional transitive dependencies using
+      # the interpreter it runs under, so a different Python version here can
+      # reproduce a spuriously different lockfile even when pyproject.toml
+      # hasn't changed.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install pip-tools
       # pip-compile keeps existing pins from requirements.txt when they still
       # satisfy pyproject.toml, so re-running it without --upgrade reproduces
       # the same file unless pyproject.toml's own constraints changed without
