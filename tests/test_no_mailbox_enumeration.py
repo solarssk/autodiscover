@@ -16,6 +16,42 @@ from tests.conftest import OUTLOOK_REQUEST_TEMPLATE
 MAILBOX_A = "alice@example.com"
 MAILBOX_B = "completely-different-user@example.com"
 
+# Root-level plist keys that legitimately embed the requested mailbox.
+_ROOT_VARYING_KEYS = {
+    "PayloadIdentifier",
+    "PayloadUUID",
+    "PayloadDisplayName",
+    "PayloadDescription",
+}
+# Per-payload keys (inside PayloadContent) that legitimately embed it too.
+_PAYLOAD_VARYING_KEYS = {
+    "PayloadIdentifier",
+    "PayloadUUID",
+    "PayloadDisplayName",
+    "EmailAccountDescription",
+    "EmailAddress",
+    "IncomingMailServerUsername",
+    "OutgoingMailServerUsername",
+}
+
+
+def _normalize_profile(profile: dict[str, object]) -> dict[str, object]:
+    """Strip mailbox-derived values from a whole .mobileconfig plist so two
+    profiles for different mailboxes can be compared structurally: same root
+    keys, same number of PayloadContent entries, same content in each entry
+    once the values that are supposed to vary are removed."""
+    payload_content = profile["PayloadContent"]
+    assert isinstance(payload_content, list)
+    normalized_content = [
+        {k: v for k, v in item.items() if k not in _PAYLOAD_VARYING_KEYS}
+        for item in payload_content
+    ]
+    normalized_root = {
+        k: v for k, v in profile.items() if k not in _ROOT_VARYING_KEYS and k != "PayloadContent"
+    }
+    normalized_root["PayloadContent"] = normalized_content
+    return normalized_root
+
 
 def test_outlook_same_shape_for_different_mailboxes(client: TestClient) -> None:
     response_a = client.post(
@@ -53,25 +89,13 @@ def test_mobileconfig_same_shape_for_different_mailboxes(client: TestClient) -> 
 
     profile_a = plistlib.loads(response_a.content)
     profile_b = plistlib.loads(response_b.content)
-    assert profile_a["PayloadType"] == profile_b["PayloadType"]
 
-    mail_a = profile_a["PayloadContent"][0]
-    mail_b = profile_b["PayloadContent"][0]
-    assert set(mail_a.keys()) == set(mail_b.keys())
-
-    # These keys legitimately differ because they embed the requested
-    # mailbox (identifiers, UUIDs, display strings, the address itself).
-    # A denylist rather than an allowlist means every other field -- present
-    # or added later -- is checked, not just the ones we thought of today.
-    varying_keys = {
-        "PayloadIdentifier",
-        "PayloadUUID",
-        "PayloadDisplayName",
-        "EmailAccountDescription",
-        "EmailAddress",
-        "IncomingMailServerUsername",
-        "OutgoingMailServerUsername",
-    }
-    mailbox_independent_a = {k: v for k, v in mail_a.items() if k not in varying_keys}
-    mailbox_independent_b = {k: v for k, v in mail_b.items() if k not in varying_keys}
-    assert mailbox_independent_a == mailbox_independent_b
+    # Compare the whole plist structurally, not just the first payload: a
+    # future change that adds or removes a PayloadContent entry for one
+    # mailbox but not the other (e.g. a conditional extra payload gated on
+    # some existence check) would reveal mailbox existence even if the
+    # first entry stayed identical, and a check scoped to PayloadContent[0]
+    # alone would never notice.
+    assert set(profile_a.keys()) == set(profile_b.keys())
+    assert len(profile_a["PayloadContent"]) == len(profile_b["PayloadContent"])
+    assert _normalize_profile(profile_a) == _normalize_profile(profile_b)
