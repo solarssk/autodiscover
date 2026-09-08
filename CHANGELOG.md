@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `CODE_OF_CONDUCT.md`.
 - `.coderabbit.yaml`: automatic CodeRabbit review is off; trigger one on demand by
   commenting `@coderabbitai review` on a PR. Matches the same setting already used in
   `ssf-transmitter` and `wp-critical-css`.
