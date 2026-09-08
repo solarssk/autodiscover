@@ -8,6 +8,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `.coderabbit.yaml`: automatic CodeRabbit review is off; trigger one on demand by
+  commenting `@coderabbitai review` on a PR. Matches the same setting already used in
+  `ssf-transmitter` and `wp-critical-css`.
 - CycloneDX SBOM generated on version tags and attached to the GitHub Release.
 - "Documentation impact" declaration on pull requests, checked in CI against the actual diff.
 - `SECURITY.md` now has a "Security controls / CI" table and a stated response-time SLA.
