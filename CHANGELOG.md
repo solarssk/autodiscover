@@ -30,6 +30,33 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   workflow on every push and PR, mechanically checking this repo against its own declared
   Tier 2 checklist (SHA-pinning, `SECURITY.md`, issue templates, `concurrency:` blocks, and
   more). Same setup already used by `ssf-transmitter`.
+- Published images are now also mirrored to **Docker Hub** (`docker.io/solarssk/mail-autodiscover`)
+  alongside GHCR. `docker-publish.yml` copies the already-built, already-scanned GHCR
+  manifest into Docker Hub by digest — never a second build — so both registries always
+  carry byte-identical images with identical Trivy results. `latest` is now enabled only
+  for `main` pushes (previously also a clean version tag): main pushes are already
+  serialized against each other, but a tag push runs in its own concurrency group fully
+  parallel to any in-flight main push, so both being eligible to write `latest` in two
+  registries each could interleave and leave GHCR and Docker Hub's `latest` pointing at
+  different digests. The release process always tags a commit already pushed to `main`,
+  so `main`'s own run has already published `latest` for that content by the time the tag
+  exists. `sha-<short>` is restricted to `main` for the same reason: a version tag shares
+  its commit's short SHA with an already-published main run, and the `apt-get upgrade` in
+  the Dockerfile means two independent builds of that same commit aren't guaranteed to
+  produce the same digest, so the same cross-registry interleaving risk applied there too.
+  Added `docker-compose.dockerhub.yml` as a Docker-Hub equivalent of the existing
+  `docker-compose.ghcr.yml`, defaulting to `latest` rather than a pinned version for now,
+  since no version tag has been published to Docker Hub yet. Also dropped the
+  `{{major}}.{{minor}}` floating tag (e.g. `1.2`) entirely: two different patch releases in
+  the same minor series are two different immutable tags with their own concurrency
+  groups, so nothing serializes them against each other, and both would write the same
+  "1.2" name from genuinely different, both-correct digests — the identical
+  cross-registry interleaving risk as above, but with no single already-serialized run to
+  defer to this time. Serializing all version-tag pushes into one group to fix it would
+  reintroduce the silent-eviction failure mode already rejected at the top of this file
+  (a third tag arriving mid-build would drop a queued release's image and SBOM entirely).
+  The precise per-version tag is immune to this by construction, since no two releases
+  ever share one.
 
 ### Changed
 

@@ -31,6 +31,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  DOCKERHUB_IMAGE: docker.io/${{ github.repository }}
 
 jobs:
   publish:
@@ -56,16 +57,59 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # DOCKERHUB_TOKEN is a Docker Hub access token (Account Settings ->
+      # Security), not the account password. Same discipline as GITHUB_TOKEN
+      # above: scoped, revocable, never the real credential.
+      - name: Log in to Docker Hub
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # `latest` and the `sha-*` tag are enabled only for `main`, never for a
+      # version tag. main pushes share one concurrency group and so are
+      # already serialized against each other, but a tag push runs in its
+      # OWN group (see the concurrency comment above) — fully in parallel
+      # with any main push, including one still writing these shared tags to
+      # GHCR and Docker Hub in two separate steps. A version tag is always
+      # cut from a commit already on `main` (AGENTS.md's release process),
+      # so both runs would compute the identical `sha-<short>` string for
+      # that commit — but not necessarily an identical image: the Dockerfile
+      # runs `apt-get upgrade` at build time, so two independent builds of
+      # the same commit, minutes apart, can resolve different package
+      # versions and produce different digests. With both refs eligible to
+      # write the same tag name, their GHCR and Docker Hub writes could
+      # interleave (e.g. main's GHCR write, then tag's GHCR write, then
+      # tag's Docker Hub write, then main's Docker Hub write) and leave that
+      # tag pointing at different digests across the two registries —
+      # silently breaking the same-image guarantee this workflow otherwise
+      # provides. main's own run has already published `latest` and
+      # `sha-<short>` for that exact commit by the time the tag exists, so
+      # the tag push only needs to add its own version tag.
+      #
+      # Deliberately no `{{major}}.{{minor}}` floating tag: two *different*
+      # patch releases in the same minor series (v1.2.3, then v1.2.4) are
+      # two different immutable tags, each with its own concurrency group,
+      # so nothing serializes them against each other either. Both would
+      # write the same "1.2" tag name from genuinely different, both-correct
+      # digests, and their GHCR/Docker-Hub writes could interleave the same
+      # way. Unlike `latest`/`sha-*` above, there's no single "already
+      # serialized" run to defer to here — the fix would have to serialize
+      # all version-tag pushes into one concurrency group, which reintroduces
+      # exactly the silent-eviction failure mode the top-of-file comment
+      # already rejected (a third tag arriving mid-build would drop a
+      # queued release's image and SBOM entirely, with no error). Precise
+      # per-version tags (`{{version}}`, below) are immune to this by
+      # construction: no two different releases ever share one.
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9  # v6.1.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-')) }}
-            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,format=short,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
 
       # Each platform is built exactly once, pushed by digest (unreferenced by
       # any tag yet), and that same digest is what gets scanned below. The
@@ -195,17 +239,41 @@ jobs:
 
       # Only reached once both platforms' gates above passed. Composes the
       # real, user-visible tags (latest, version tags, ...) directly from the
-      # two already-scanned digests — never a rebuild.
-      - name: Create and push multi-arch manifest
+      # two already-scanned digests — never a rebuild. --metadata-file
+      # captures the merged manifest's own digest so the Docker Hub copy
+      # below has a stable, precise reference instead of re-reading a
+      # floating tag that a concurrent run could have already moved.
+      - name: Create and push multi-arch manifest (GHCR)
+        id: manifest
         run: |
           set -euo pipefail
           tag_args=()
           while IFS= read -r tag; do
             [ -n "$tag" ] && tag_args+=(--tag "$tag")
           done <<< "${{ steps.meta.outputs.tags }}"
-          docker buildx imagetools create "${tag_args[@]}" \
+          docker buildx imagetools create --metadata-file manifest.json "${tag_args[@]}" \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}" \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}"
+          digest="$(jq -r '."containerimage.descriptor".digest // empty' manifest.json)"
+          [ -n "$digest" ] || { echo "::error::could not resolve merged manifest digest from metadata file"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # Docker Hub is never a build target: BuildKit's image exporter takes
+      # one `name=` per invocation, so a second registry can't be fanned out
+      # to from the per-platform builds above without building twice. This
+      # is a registry-to-registry copy of the exact manifest GHCR just
+      # received (same digest, same scan results — nothing rebuilt), with
+      # tags derived by swapping the registry host only; the image path
+      # (owner/repo) is identical in both registries.
+      - name: Copy manifest to Docker Hub
+        run: |
+          set -euo pipefail
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && tag_args+=(--tag "${tag/ghcr.io/docker.io}")
+          done <<< "${{ steps.meta.outputs.tags }}"
+          docker buildx imagetools create "${tag_args[@]}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.manifest.outputs.digest }}"
 
       # release.yml also triggers on this same tag push and creates the
       # GitHub Release independently; wait for it rather than assuming it

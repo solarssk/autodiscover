@@ -17,6 +17,8 @@
 <p align="center">
   <a href="https://github.com/solarssk/mail-autodiscover/pkgs/container/mail-autodiscover"><img src="https://img.shields.io/badge/GHCR-solarssk%2Fmail--autodiscover-2496ED?logo=docker&logoColor=white" alt="GHCR: solarssk/mail-autodiscover"></a>
   &nbsp;
+  <a href="https://hub.docker.com/r/solarssk/mail-autodiscover"><img src="https://img.shields.io/badge/Docker%20Hub-solarssk%2Fmail--autodiscover-2496ED?logo=docker&logoColor=white" alt="Docker Hub: solarssk/mail-autodiscover"></a>
+  &nbsp;
   <img src="https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue" alt="Platforms: amd64, arm64">
 </p>
 
@@ -125,19 +127,25 @@ For local builds:
 docker compose up -d
 ```
 
-For GHCR images:
+For a prebuilt image, from GHCR:
 
 ```bash
 docker compose -f docker-compose.ghcr.yml up -d
 ```
 
+or from Docker Hub:
+
+```bash
+docker compose -f docker-compose.dockerhub.yml up -d
+```
+
 The compose examples mount `./config:/config:ro`, so placing `config/config.yaml` next to the compose file is enough for multi-domain mode.
 
-Prebuilt images are published to GHCR:
+Both registries carry the same image, built and scanned once per release — pick whichever fits your setup:
 
 ```text
 ghcr.io/solarssk/mail-autodiscover:latest
-ghcr.io/solarssk/mail-autodiscover:0.3.3
+docker.io/solarssk/mail-autodiscover:latest
 ```
 
 Prefer pinned tags or digests in production.
