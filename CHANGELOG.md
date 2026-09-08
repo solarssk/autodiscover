@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- `.coderabbit.yaml`: automatic CodeRabbit review is off; trigger one on demand by
+  commenting `@coderabbitai review` on a PR. Matches the same setting already used in
+  `ssf-transmitter` and `wp-critical-css`.
+
 ## [0.3.3] - 2026-06-21
 
 ### What's new
