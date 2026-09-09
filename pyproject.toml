@@ -17,18 +17,34 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
 ]
 
+# Split by concern so each CI job installs only what it actually runs
+# (test/lint/typecheck/security), instead of every job paying for the full
+# dev toolchain. `dev` still pulls in everything for local setup via the
+# self-referencing extra below (verified pip resolves this correctly).
 [project.optional-dependencies]
-dev = [
-    "bandit>=1.8.0",
-    "deptry>=0.23.0",
+test = [
     "httpx>=0.28.0",
-    "mypy>=1.13.0",
-    "pip-audit>=2.7.0",
-    "pip-tools>=7.4.0",
-    "pre-commit>=4.2.0",
     "pytest>=8.3.0",
     "pytest-cov>=6.0.0",
-    "ruff>=0.8.0",
+]
+lint = [
+    # Pinned exactly, matching .pre-commit-config.yaml's `rev:` -- CI and
+    # pre-commit must run the same ruff version so a rule added upstream
+    # can't pass in one and fail in the other.
+    "ruff==0.16.6",
+]
+typecheck = [
+    "mypy>=1.13.0",
+]
+security = [
+    "bandit>=1.8.0",
+    "deptry>=0.23.0",
+    "pip-audit>=2.7.0",
+]
+dev = [
+    "mail-autodiscover[test,lint,typecheck,security]",
+    "pip-tools>=7.4.0",
+    "pre-commit>=4.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -83,6 +99,10 @@ ignore = ["DEP003"]
 [tool.deptry.per_rule_ignores]
 DEP002 = [
     "uvicorn",
+    # `dev`'s self-reference to this project's own other extras
+    # (mail-autodiscover[test,lint,typecheck,security]) reads to deptry as a
+    # declared dependency on the package itself, which it never imports.
+    "mail-autodiscover",
     "bandit",
     "deptry",
     "httpx",
