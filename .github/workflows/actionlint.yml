@@ -1,0 +1,49 @@
+name: Actionlint
+
+# Catches GitHub-Actions-workflow-specific problems that CodeQL's "actions"
+# language analysis doesn't have queries for: malformed expressions, wrong
+# or misspelled `with:`/`needs:` input and job names, and other schema-level
+# mistakes. security-extended already covers code-injection-via-untrusted-
+# expression-interpolation and unpinned-action-tag checks for this repo (and
+# every `uses:` here is already SHA-pinned), so this isn't a second SAST
+# pass -- it's a correctness linter CodeQL doesn't substitute for.
+#
+# Path-filtered to .github/workflows/** so it only runs when there's
+# actually something for it to check.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          curl -fsSL --proto '=https' --tlsv1.2 -o actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - run: actionlint
