@@ -127,32 +127,37 @@ If no upgrade step is needed, write `- No action required.`
 
 ### Cut a release
 
-After `main` is clean:
+After `main` is clean, open a PR that bumps `version` in `pyproject.toml` and adds the
+matching `## [X.Y.Z] - YYYY-MM-DD` entry to `CHANGELOG.md`, then merge it. That's the whole
+manual part — no `git tag` step.
 
-```bash
-git checkout main && git pull
-git tag v0.1.2
-git push origin v0.1.2
-```
+`release.yml` runs on every push to `main`. It compares `pyproject.toml`'s version before and
+after the push; if it changed and `CHANGELOG.md` has a matching heading for it, it:
 
-The **Release** workflow reads `CHANGELOG.md` and publishes formatted notes with:
+- creates the `vX.Y.Z` tag (pinned to the exact merge commit) and a GitHub Release, with notes
+  formatted from that CHANGELOG entry — a short human summary, a clear `Action required` or
+  `No action required` section, the technical emoji sections, Docker tags, and documentation
+  links,
+- dispatches `docker-publish.yml` for that tag (GHCR + Docker Hub),
+- closes the `vX.Y.Z` milestone if one is open.
 
-- a short human summary,
-- a clear `Action required` or `No action required` section,
-- the technical emoji sections,
-- Docker tags and documentation links.
+Any other push (no version change) is a no-op for this workflow. If the version bumped but the
+CHANGELOG heading is missing, misdated, or the release already exists, it skips with a warning
+instead of creating a broken release.
 
-Preview locally:
+Preview the notes locally before merging:
 
 ```bash
 python scripts/format_release_notes.py v0.1.2
 ```
 
-Manual release (same formatting):
+If the automation needs to be bypassed (e.g. it's broken, or you need to re-cut a release),
+do it manually with the same formatting:
 
 ```bash
 python scripts/format_release_notes.py v0.1.2 > /tmp/notes.md
-gh release create v0.1.2 --target main --title "v0.1.2" --notes-file /tmp/notes.md
+gh release create v0.1.2 --target main --notes-file /tmp/notes.md
+gh workflow run docker-publish.yml --ref v0.1.2
 ```
 
 ## Security

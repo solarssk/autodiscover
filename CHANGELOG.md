@@ -8,6 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `release.yml` now runs on every push to `main` and automates the whole release: if the push
+  changed `pyproject.toml`'s version and `CHANGELOG.md` has a matching `## [X.Y.Z] -
+  YYYY-MM-DD` heading, it creates the `vX.Y.Z` tag and GitHub Release, dispatches
+  `docker-publish.yml` (GITHUB_TOKEN-created tags don't self-trigger other workflows' `push:
+  tags:` listeners), and closes the matching `vX.Y.Z` milestone. Merging the release PR is now
+  the only manual step — matches the automation `ssf-transmitter` already uses, adapted to
+  this repo's own CHANGELOG format and `format_release_notes.py`.
+
 - `requirements.txt`: hash-pinned lockfile for runtime dependencies, generated with
   `pip-compile`. The Docker image now installs from this instead of resolving
   `pyproject.toml`'s `>=` bounds fresh on every build, so the exact same dependency
@@ -109,6 +117,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   reading the request body, instead of buffering the entire body into memory first and
   only checking the size afterward. An oversized POST is now rejected as soon as the
   limit is crossed, without ever fully buffering it.
+- `scripts/format_release_notes.py` no longer claims a floating `major.minor` Docker tag
+  (e.g. `:0.3`) in generated release notes — `docker-publish.yml` stopped publishing that tag
+  (see the Docker Hub entry above) but this script wasn't updated to match. Now lists the
+  precise version tag and `latest` for both GHCR and Docker Hub instead.
 
 ## [0.3.3] - 2026-06-21
 

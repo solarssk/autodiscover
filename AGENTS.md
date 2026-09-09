@@ -105,9 +105,16 @@ ENV-based `ALLOWED_DOMAINS`/`IMAP_*`/`SMTP_*` values are ignored for routing.
    described in `CONTRIBUTING.md` (narrative sections first, then KaC technical sections).
 3. Update the version comparison links at the bottom of `CHANGELOG.md`:
    each `[VERSION]` must link to `compare/vPREV...vVERSION`.
-4. Open a PR, merge to `main`.
-5. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-   The Release workflow reads `CHANGELOG.md` and publishes formatted notes automatically.
+4. Open a PR, merge to `main`. That's it — no manual tag push.
+
+`release.yml` runs on every push to `main` and compares `pyproject.toml`'s version before and
+after: if it changed and `CHANGELOG.md` has a matching `## [X.Y.Z] - YYYY-MM-DD` heading, it
+creates the `vX.Y.Z` tag and GitHub Release (notes formatted from that CHANGELOG entry),
+dispatches `docker-publish.yml` for that tag (GHCR + Docker Hub, tag pushes made by
+`GITHUB_TOKEN` don't self-trigger other workflows), and closes the matching `vX.Y.Z` milestone
+if one is open. Any other push is a no-op for this workflow. If the version bumped but the
+CHANGELOG heading is missing or misdated, it skips with a warning instead of creating a
+broken release — fix the CHANGELOG entry and push again.
 
 ## Things to be careful about
 

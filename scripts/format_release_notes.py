@@ -22,7 +22,8 @@ SUMMARY_SECTIONS = ("What's new", "What this means", "Action required")
 
 ROOT = Path(__file__).resolve().parent.parent
 CHANGELOG = ROOT / "CHANGELOG.md"
-IMAGE = "ghcr.io/solarssk/mail-autodiscover"
+GHCR_IMAGE = "ghcr.io/solarssk/mail-autodiscover"
+DOCKERHUB_IMAGE = "docker.io/solarssk/mail-autodiscover"
 
 
 def parse_version(tag: str) -> str:
@@ -116,11 +117,12 @@ def docker_block(version: str, prerelease: bool) -> str:
         "## 🐳 Docker tags",
         "",
         "```text",
-        f"{IMAGE}:{tag}",
-        f"{IMAGE}:{tag.rsplit('.', 1)[0]}" if "." in tag else f"{IMAGE}:{tag}",
+        f"{GHCR_IMAGE}:{tag}",
+        f"{DOCKERHUB_IMAGE}:{tag}",
     ]
     if not prerelease and "-" not in tag:
-        lines.append(f"{IMAGE}:latest")
+        lines.append(f"{GHCR_IMAGE}:latest")
+        lines.append(f"{DOCKERHUB_IMAGE}:latest")
     lines.extend(
         [
             "```",

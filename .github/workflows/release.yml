@@ -1,21 +1,57 @@
 name: Release
 
+# After a release PR (bumping pyproject.toml's version and adding a
+# matching CHANGELOG.md entry) merges to main, create the git tag + GitHub
+# Release and explicitly trigger docker-publish.yml. Same automation
+# ssf-transmitter already uses, adapted to this repo's actual tooling
+# (format_release_notes.py, this repo's `## [X.Y.Z] - YYYY-MM-DD` CHANGELOG
+# heading, and the `vX.Y.Z`-titled milestones already used here).
+#
+# Detection compares pyproject.toml's version before/after this push,
+# rather than matching a commit-message convention like "release: vX.Y.Z":
+# it verifies the actual state (version changed, CHANGELOG has a matching
+# heading) instead of trusting a promise in a PR title that could be
+# reworded or typo'd by whichever merge method lands it. `git diff --exit-code`
+# in ci.yml's dependency-lock job is the same philosophy: check the real
+# artifact, not a claim about it. It also falls back to checking "is the
+# current version unreleased and now has a valid CHANGELOG heading" when
+# the version didn't change in *this specific* push: a follow-up commit
+# that only fixes an earlier push's missing/malformed CHANGELOG heading
+# (the documented recovery when this workflow warns and skips) looks
+# "unchanged" from that later push's own before/after diff, since the
+# version itself moved in the earlier commit -- the fallback is what makes
+# that recovery actually work instead of skipping forever.
+#
+# GITHUB_TOKEN-authored tag pushes (which `gh release create` below
+# performs) do not themselves start other workflows -- GitHub's own loop-
+# prevention -- so docker-publish.yml needs an explicit `gh workflow run`
+# dispatch here rather than relying on its own `push: tags:` listener.
+
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
-# Grouped per ref (per tag), not per repository, for the same reason as
-# docker-publish.yml: a repo-wide group only holds one pending run, so a
-# third tag pushed while an earlier tag's release is still running would
-# silently evict the middle tag's queued run. That tag would then never get
-# a GitHub Release, and docker-publish.yml's SBOM-attach step (which polls
-# for this workflow's release to exist) would time out waiting for it.
+# Per-commit, not per-repository: a concurrency group holds at most one
+# *running* and one *pending* run, not a FIFO queue (same fact documented
+# in docker-publish.yml's own concurrency comment). A repository-wide group
+# here would let an ordinary push arriving while a real version-bump push's
+# run is still queued behind an in-progress one silently evict that queued
+# run -- since every push to main shares this workflow, not just release
+# pushes, that's a likely occurrence on an active branch, not a rare edge
+# case. Each push getting its own group means it can only ever be evicted
+# by a *retry of that same push*, which is the one case where losing the
+# pending run is harmless (it'll just run again).
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
   contents: write
+  actions: write
+  # Required by the Milestones API's PATCH endpoint (grouped under Issues,
+  # not Contents) -- without it, "Close matching GitHub milestone" 403s on
+  # every real release that has a matching open milestone.
+  issues: write
 
 jobs:
   release:
@@ -26,22 +62,198 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      # Deliberately never gates on whether `gh release view` finds the tag
+      # already exists: that check lives only in the "Create GitHub Release
+      # and tag" step, scoped to make just that one step idempotent. Gating
+      # here on release-existence would make a retry of *this exact push*
+      # (after release creation succeeded but a later step failed) report
+      # skip=true once the release exists and never retry the steps after
+      # it -- the crash-only-recovery equivalent of checking a job's own
+      # past success to decide whether to redo it.
+      - name: Detect version bump
+        id: bump
+        run: |
+          set -euo pipefail
+          NEW="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if ! printf '%s' "$NEW" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Invalid pyproject.toml [project].version: $NEW" >&2
+            exit 1
+          fi
+          TAG="v${NEW}"
+
+          BEFORE="${{ github.event.before }}"
+          HAVE_BEFORE=false
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            HAVE_BEFORE=true
+          fi
+
+          OLD=""
+          if [ "$HAVE_BEFORE" = "true" ] && git cat-file -e "${BEFORE}:pyproject.toml" 2>/dev/null; then
+            OLD="$(git show "${BEFORE}:pyproject.toml" \
+              | python3 -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["project"]["version"])' \
+              2>/dev/null || true)"
+          fi
+
+          HEADING_RE="^## \[${NEW//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}"
+          CHANGELOG_OK=false
+          grep -qE "$HEADING_RE" CHANGELOG.md && CHANGELOG_OK=true
+
+          # Was the heading *already* present before this push? Only needed
+          # when NEW didn't change (checked below) -- comparing against the
+          # committed CHANGELOG.md at BEFORE, not the current one.
+          CHANGELOG_OK_BEFORE=false
+          if [ "$HAVE_BEFORE" = "true" ] && git cat-file -e "${BEFORE}:CHANGELOG.md" 2>/dev/null; then
+            git show "${BEFORE}:CHANGELOG.md" | grep -qE "$HEADING_RE" && CHANGELOG_OK_BEFORE=true
+          fi
+
+          # Attempt if this exact push moved the version (the ordinary,
+          # fresh-release case) -- or if the version is unchanged but *this
+          # push* is specifically the one that just added the matching
+          # heading (recovering from an earlier push that bumped the
+          # version without one, per the warning below). Deliberately not
+          # "heading exists now, whatever pushed it there": every push
+          # after the real fix also sees an unchanged version and an
+          # already-valid heading, and treating all of those as attempts
+          # too would let an unrelated later push race the actual fix
+          # commit's own run to create the release -- whichever wins
+          # decides which commit the tag (and its --target) points to.
+          ATTEMPT=false
+          if [ "$NEW" != "$OLD" ]; then
+            ATTEMPT=true
+          elif [ "$CHANGELOG_OK" = "true" ] && [ "$CHANGELOG_OK_BEFORE" = "false" ]; then
+            ATTEMPT=true
+          fi
+
+          if [ "$ATTEMPT" = "false" ]; then
+            echo "Nothing to release for ${TAG} yet -- skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$CHANGELOG_OK" = "false" ]; then
+            echo "pyproject.toml is at ${NEW} but CHANGELOG.md has no matching" \
+                 "'## [${NEW}] - YYYY-MM-DD' heading yet -- skipping." >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "skip=false"
+            echo "version=$NEW"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Version bump detected: ${TAG}"
+
       - name: Set up Python
+        if: steps.bump.outputs.skip != 'true'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Build formatted release notes
+        if: steps.bump.outputs.skip != 'true'
         id: notes
         run: |
-          python scripts/format_release_notes.py "${GITHUB_REF_NAME}" > /tmp/release-notes.md
+          python scripts/format_release_notes.py "${{ steps.bump.outputs.tag }}" > /tmp/release-notes.md
           echo "path=/tmp/release-notes.md" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
-        with:
-          body_path: /tmp/release-notes.md
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          make_latest: ${{ !contains(github.ref_name, '-') }}
+      # --target pins the new tag to the exact commit this run checked out
+      # and verified above -- not main's current tip, which could have moved
+      # if another push landed while this run was in flight. It only takes
+      # effect when `gh release create` creates the tag itself, though: per
+      # `gh release create --help`, if a tag with this name already exists
+      # anywhere in the repo, --target is silently ignored and the release
+      # is attached to that existing tag wherever it points -- so an
+      # orphaned tag (a leftover manual push, or a previous run that tagged
+      # but never finished publishing) could get a release created for the
+      # wrong commit without this ever calling `gh release create` unsafely.
+      # Resolving the tag via the commits API up front (works whether a
+      # Release exists for it or not, unlike `gh release view`) and
+      # rejecting a mismatch before ever calling `gh release create` closes
+      # that gap. A version number accidentally reused or rolled back to
+      # could hit either the tag-exists or release-exists case, and silently
+      # treating either as "already done" would go on to dispatch
+      # docker-publish.yml and close a milestone against the wrong content
+      # entirely.
+      #
+      # If the tag already exists and matches, only actually skip creation
+      # when a Release also already exists for it -- a genuine retry of this
+      # exact commit after a prior run created the release but a later step
+      # failed. If the tag matches but has no Release yet (the orphaned-tag
+      # case above, but pointing at the right commit), fall through to `gh
+      # release create`, which will safely attach a Release to that
+      # already-correct tag instead of trying to move it.
+      #
+      # No --latest here even for a stable version: per-commit concurrency
+      # groups mean two different stable-version pushes can run fully in
+      # parallel, and forcing --latest unconditionally could have the older
+      # of the two finish second and un-latest the genuinely newer release
+      # that already exists. Omitting the flag uses gh's own default
+      # ("automatic based on date and version" -- see `gh release create
+      # --help`), which correctly compares against every existing release
+      # rather than just asserting "I am latest" irrespective of what else
+      # exists.
+      - name: Create GitHub Release and tag
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.bump.outputs.tag }}"
+          EXISTING_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$EXISTING_SHA" ] && [ "$EXISTING_SHA" != "${{ github.sha }}" ]; then
+            echo "::error::Tag $TAG already exists but resolves to a different commit" \
+                 "(${EXISTING_SHA}, not ${{ github.sha }}). This looks like a reused or" \
+                 "rolled-back version number in pyproject.toml, or an orphaned tag left over" \
+                 "from an earlier manual push or failed release -- refusing to publish under it." >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists and points at this same commit -- skipping creation, continuing to the steps below."
+            exit 0
+          fi
+          args=(
+            --repo "${GITHUB_REPOSITORY}"
+            --target "${{ github.sha }}"
+            --notes-file "${{ steps.notes.outputs.path }}"
+          )
+          if printf '%s' "$TAG" | grep -q -- '-'; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}"
+          echo "Created $TAG."
+
+      # gh release create above tags and pushes with GITHUB_TOKEN, which does
+      # NOT trigger docker-publish.yml's own `push: tags:` listener -- dispatch
+      # it explicitly. Always runs (given skip != true), regardless of whether
+      # the release was just created above or already existed from an earlier,
+      # partially-failed run -- a rerun must still retry this.
+      - name: Trigger container publish
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.bump.outputs.tag }}"
+          gh workflow run docker-publish.yml --repo "${GITHUB_REPOSITORY}" --ref "$TAG"
+          echo "Triggered docker-publish for ${TAG}."
+
+      - name: Close matching GitHub milestone
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.bump.outputs.tag }}"
+          MID="$(gh api "repos/${GITHUB_REPOSITORY}/milestones" \
+            --jq ".[] | select(.title == \"${TAG}\" and .state == \"open\") | .number" \
+            | head -n 1)"
+          if [ -z "$MID" ]; then
+            echo "No open milestone titled ${TAG} -- skipping."
+            exit 0
+          fi
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/milestones/${MID}" -f state=closed
+          echo "Closed milestone ${TAG} (#${MID})"

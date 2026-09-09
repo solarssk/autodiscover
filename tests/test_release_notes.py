@@ -16,6 +16,14 @@ def test_build_release_notes_v0_1_1() -> None:
     assert "actions/checkout" in notes
     assert "## 🐳 Docker tags" in notes
     assert "ghcr.io/solarssk/mail-autodiscover:0.1.1" in notes
+    assert "docker.io/solarssk/mail-autodiscover:0.1.1" in notes
+    assert "ghcr.io/solarssk/mail-autodiscover:latest" in notes
+    assert "docker.io/solarssk/mail-autodiscover:latest" in notes
+    # No floating major.minor tag: docker-publish.yml deliberately doesn't
+    # publish one (two different patch releases racing for the same "0.1"
+    # tag across two registries could leave them pointing at different
+    # digests -- see docker-publish.yml's own comments).
+    assert "mail-autodiscover:0.1\n" not in notes
     assert "## 📚 Useful links" in notes
 
 
