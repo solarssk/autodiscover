@@ -207,6 +207,29 @@ def test_rate_limit_evicts_oldest_clients_when_over_capacity() -> None:
     assert "203.0.113.1" not in _rate_limit_store
 
 
+def test_rate_limit_eviction_keeps_most_recently_touched_clients() -> None:
+    """A flood of far more distinct clients than capacity must still cap the
+    store at max_clients and keep exactly the most-recently-touched ones,
+    regardless of how many distinct identities came before them."""
+    reset_rate_limit_store()
+    settings = make_settings(
+        rate_limit_enabled=True,
+        rate_limit_per_minute=100,
+        rate_limit_max_clients=5,
+        rate_limit_cleanup_interval_seconds=0,
+    )
+
+    client_count = 200
+    for i in range(client_count):
+        assert is_rate_limited(f"198.51.100.{i}", settings) is False
+        assert len(_rate_limit_store) <= 5
+
+    assert len(_rate_limit_store) == 5
+    surviving = list(_rate_limit_store.keys())
+    expected = [f"198.51.100.{i}" for i in range(client_count - 5, client_count)]
+    assert surviving == expected
+
+
 def test_rate_limit_cleanup_evicts_stale_entries() -> None:
     reset_rate_limit_store()
     settings = make_settings(

@@ -9,7 +9,7 @@ import logging
 import re
 import time
 import uuid
-from collections import defaultdict
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from threading import Lock
 
@@ -21,7 +21,11 @@ from app.config import Settings
 
 logger = logging.getLogger("mail_autodiscover.access")
 
-_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+# OrderedDict, not a plain dict: every touch below calls move_to_end() so the
+# front of the dict is always the least-recently-touched client, letting
+# _enforce_rate_limit_capacity() evict in O(1) instead of sorting the whole
+# store by timestamp on every request once at capacity.
+_rate_limit_store: OrderedDict[str, list[float]] = OrderedDict()
 _rate_limit_lock = Lock()
 _last_rate_limit_cleanup = 0.0
 
@@ -157,17 +161,10 @@ def _cleanup_rate_limit_store(now: float, settings: Settings) -> None:
             del _rate_limit_store[ip]
 
 def _enforce_rate_limit_capacity(settings: Settings) -> None:
-    """Evict oldest client entries when the store exceeds configured capacity."""
+    """Evict least-recently-touched client entries when over configured capacity."""
     max_clients = settings.rate_limit_max_clients
-    if len(_rate_limit_store) <= max_clients:
-        return
-
-    ranked = sorted(
-        _rate_limit_store.items(),
-        key=lambda item: item[1][-1] if item[1] else 0.0,
-    )
-    for ip, _ in ranked[: len(_rate_limit_store) - max_clients]:
-        del _rate_limit_store[ip]
+    while len(_rate_limit_store) > max_clients:
+        _rate_limit_store.popitem(last=False)
 
 
 def hash_domain(domain: str) -> str:
@@ -196,11 +193,14 @@ def is_rate_limited(client_ip: str, settings: Settings) -> bool:
 
     with _rate_limit_lock:
         _cleanup_rate_limit_store(now, settings)
-        timestamps = _rate_limit_store[client_ip]
-        _rate_limit_store[client_ip] = [t for t in timestamps if now - t < window]
-        if len(_rate_limit_store[client_ip]) >= limit:
+        timestamps = [t for t in _rate_limit_store.get(client_ip, []) if now - t < window]
+        _rate_limit_store[client_ip] = timestamps
+        # Move to the end regardless of outcome: this client was just active,
+        # so it must not be the next one evicted as "least recently touched".
+        _rate_limit_store.move_to_end(client_ip)
+        if len(timestamps) >= limit:
             return True
-        _rate_limit_store[client_ip].append(now)
+        timestamps.append(now)
         _enforce_rate_limit_capacity(settings)
     return False
 
