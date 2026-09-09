@@ -203,13 +203,45 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.bump.outputs.tag }}"
-          EXISTING_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha' 2>/dev/null || true)"
-          if [ -n "$EXISTING_SHA" ] && [ "$EXISTING_SHA" != "${{ github.sha }}" ]; then
-            echo "::error::Tag $TAG already exists but resolves to a different commit" \
-                 "(${EXISTING_SHA}, not ${{ github.sha }}). This looks like a reused or" \
-                 "rolled-back version number in pyproject.toml, or an orphaned tag left over" \
-                 "from an earlier manual push or failed release -- refusing to publish under it." >&2
-            exit 1
+          # `gh api` writes the response body to stdout on both success and
+          # failure, and its own exit code is 1 "for any reason" (its own
+          # docs' words) -- it doesn't distinguish a nonexistent ref from a
+          # transient 5xx, a rate limit, or a network error. Capturing the
+          # raw body with `|| true` and reading fields out of it with jq,
+          # rather than branching on the exit status, means every outcome
+          # is judged by what the response actually says:
+          #   - a real commit lookup has a `.sha` field -- compare it.
+          #   - GitHub's specific "ref doesn't exist" response for this
+          #     endpoint is a 422 with message "No commit found for SHA:
+          #     ..." (verified against a real nonexistent ref) -- treat
+          #     only that exact shape as "tag doesn't exist yet".
+          #   - anything else (malformed/empty body, a different status, a
+          #     different message) fails closed instead of silently
+          #     treating an inconclusive check as "safe to proceed": a
+          #     false negative here would let `gh release create` attach
+          #     this release to an orphaned tag's wrong commit, since
+          #     --target is only honored when the tag doesn't already
+          #     exist (per `gh release create --help`).
+          RESPONSE="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" 2>/dev/null || true)"
+          EXISTING_SHA="$(printf '%s' "$RESPONSE" | jq -r '.sha // empty' 2>/dev/null || true)"
+          if [ -n "$EXISTING_SHA" ]; then
+            if [ "$EXISTING_SHA" != "${{ github.sha }}" ]; then
+              echo "::error::Tag $TAG already exists but resolves to a different commit" \
+                   "(${EXISTING_SHA}, not ${{ github.sha }}). This looks like a reused or" \
+                   "rolled-back version number in pyproject.toml, or an orphaned tag left over" \
+                   "from an earlier manual push or failed release -- refusing to publish under it." >&2
+              exit 1
+            fi
+          else
+            RESPONSE_STATUS="$(printf '%s' "$RESPONSE" | jq -r '.status // empty' 2>/dev/null || true)"
+            RESPONSE_MESSAGE="$(printf '%s' "$RESPONSE" | jq -r '.message // empty' 2>/dev/null || true)"
+            if [ "$RESPONSE_STATUS" != "422" ] || [[ "$RESPONSE_MESSAGE" != "No commit found for SHA:"* ]]; then
+              echo "::error::Could not confirm whether tag $TAG already exists -- the lookup" \
+                   "returned something other than the expected 'ref not found' response:" \
+                   "${RESPONSE:-<empty response>}. Refusing to proceed without being able to" \
+                   "rule out an existing tag pointing at the wrong commit." >&2
+              exit 1
+            fi
           fi
           if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             echo "Release $TAG already exists and points at this same commit -- skipping creation, continuing to the steps below."
@@ -218,6 +250,7 @@ jobs:
           args=(
             --repo "${GITHUB_REPOSITORY}"
             --target "${{ github.sha }}"
+            --title "$TAG"
             --notes-file "${{ steps.notes.outputs.path }}"
           )
           if printf '%s' "$TAG" | grep -q -- '-'; then
