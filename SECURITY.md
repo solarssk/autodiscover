@@ -118,7 +118,7 @@ Don't rely on domain membership being hidden. If that matters for your deploymen
 | Dependabot | Dependency and GitHub Actions update PRs | Weekly | `.github/dependabot.yml` |
 | Documentation-impact check | PR's declared doc-update checkbox verified against the actual diff | Every non-Dependabot PR | `.github/workflows/ci.yml` (`docs-impact`) |
 | Codecov | Coverage report and patch-coverage signal (not yet a merge gate) | Every push and PR | `.github/workflows/ci.yml` (`test`) |
-| SonarCloud | Static analysis, code smells, and security rating (not yet a merge gate) | Every push and PR | `.github/workflows/ci.yml` (`test`) |
+| SonarCloud | Static analysis, code smells, and security rating (own job, not a merge gate) | Every push and PR | `.github/workflows/ci.yml` (`sonarcloud`) |
 | Verify standard | Mechanical check against the `solarssk/playbook` Tier 2 checklist (SHA-pinning, `SECURITY.md`, issue templates, `concurrency:` blocks, and more) | Every push and PR | `.github/workflows/verify-standard.yml` |
 
 This table is a claim you can check directly: open the named workflow file and confirm the
