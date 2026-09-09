@@ -351,6 +351,15 @@ jobs:
       # a shorter wait here would time out a legitimately slow but healthy
       # build, leaving a real GitHub Release without its container tag or
       # SBOM for no actual reason.
+      # Digest computed from `imagetools inspect --raw`'s output ourselves
+      # (sha256 of the exact bytes), not read from a `--format` field: a
+      # multi-arch manifest's own digest isn't part of its documented Go
+      # template fields, so relying on one risked depending on
+      # version-specific or undocumented behavior. `--raw` is documented to
+      # return "the original, unformatted JSON manifest" -- hashing it is
+      # how a content-addressed digest is defined in the first place, not
+      # an assumption about this tool's output shape. Verified locally that
+      # this reproduces the exact same digest the registry itself reports.
       - name: Wait for the source image to be published
         id: source
         run: |
@@ -358,7 +367,8 @@ jobs:
           source_tag="sha-${GITHUB_SHA:0:7}"
           source_ref="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${source_tag}"
           for _ in $(seq 1 180); do
-            if digest="$(docker buildx imagetools inspect "$source_ref" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty')" && [ -n "$digest" ]; then
+            if raw="$(docker buildx imagetools inspect "$source_ref" --raw 2>/dev/null)" && [ -n "$raw" ]; then
+              digest="sha256:$(printf '%s' "$raw" | sha256sum | cut -d' ' -f1)"
               echo "digest=$digest" >> "$GITHUB_OUTPUT"
               echo "Found ${source_ref} @ ${digest}"
               exit 0
