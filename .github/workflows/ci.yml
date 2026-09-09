@@ -150,7 +150,11 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install ".[test]"
-      - run: pytest -v
+      # sonar-project.properties' sonar.python.xunit.reportPath=junit.xml
+      # needs this job's own junit.xml -- this is a separate runner from the
+      # "test" job, so its report isn't produced here just because the other
+      # job's pytest run wrote one.
+      - run: pytest -v --junitxml=junit.xml
 
       # CI-based analysis (sonar-project.properties), not SonarCloud's
       # Automatic Analysis; the two are mutually exclusive. Automatic
