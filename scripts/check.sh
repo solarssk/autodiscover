@@ -47,7 +47,10 @@ git diff --exit-code requirements.txt
 
 if [[ "${SKIP_PIP_AUDIT:-}" != "1" ]]; then
   echo "==> pip-audit"
-  "$PIP_AUDIT"
+  # Scoped to requirements.txt (the exact runtime lockfile Dockerfile installs
+  # with --require-hashes), matching CI -- not the local .venv's full dev
+  # toolchain, which pip-audit would otherwise scan by default.
+  "$PIP_AUDIT" -r requirements.txt
 fi
 
 if [[ "${SKIP_DEPTRY:-}" != "1" ]]; then

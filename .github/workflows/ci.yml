@@ -16,6 +16,7 @@ jobs:
   gitleaks:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -48,6 +49,7 @@ jobs:
   docs-impact:
     name: Documentation impact declaration
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -61,6 +63,7 @@ jobs:
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -69,31 +72,38 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install ruff
+      # Pinned via the `lint` extra (matches .pre-commit-config.yaml's `rev:`)
+      # instead of a bare `pip install ruff`, so CI and pre-commit can't drift
+      # to different ruff versions -- a rule added upstream under an
+      # already-selected prefix (e.g. "B") would otherwise start failing in
+      # one and not the other.
+      - run: pip install ".[lint]"
       - run: ruff check .
 
   test:
     name: Tests and coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-          # SonarCloud's scan below needs full history (not the default
-          # shallow clone) to attribute new-vs-existing code by git blame.
-          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install ".[dev]"
+      # Only what pytest itself needs (pytest, pytest-cov, httpx for
+      # TestClient) -- mypy/bandit/ruff/etc. live in their own extras and
+      # their own jobs now, so this required job isn't paying to install
+      # tools it never runs.
+      - run: pip install ".[test]"
       - run: pytest -v --junitxml=junit.xml
 
-      # "Tests and coverage" is a required status check, but Codecov/SonarCloud
-      # are documented as report-only signals, not merge gates, at this stage.
-      # continue-on-error makes that true regardless of what each action's own
-      # exit code does: an external-service hiccup (Codecov down, a transient
-      # SonarCloud error) must not fail this required job.
+      # "Tests and coverage" is a required status check, but Codecov is a
+      # documented report-only signal, not a merge gate, at this stage.
+      # continue-on-error makes that true regardless of what the action's
+      # own exit code does: an external-service hiccup (Codecov down) must
+      # not fail this required job.
       - name: Upload coverage to Codecov
         # Fork and Dependabot PRs can't read repo secrets; tests still run either way.
         if: ${{ env.CODECOV_TOKEN != '' }}
@@ -116,6 +126,32 @@ jobs:
           token: ${{ env.CODECOV_TOKEN }}
           files: junit.xml
 
+  # Split out of "Tests and coverage" (which IS a required status check):
+  # the Sonar scan itself routinely took ~46s -- almost as long as the rest
+  # of that job combined -- and continue-on-error only stops a Sonar failure
+  # from failing the required job, it does nothing about that job's runtime
+  # having to include the scan's full duration, since steps in a job run
+  # sequentially. Moving it to its own, non-required job means the required
+  # job reports back as soon as pytest + Codecov are done, while Sonar still
+  # runs (in parallel, not blocking merge) and reports its own findings.
+  sonarcloud:
+    name: SonarCloud analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # SonarCloud's scan needs full history (not the default shallow
+          # clone) to attribute new-vs-existing code by git blame.
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install ".[test]"
+      - run: pytest -v
+
       # CI-based analysis (sonar-project.properties), not SonarCloud's
       # Automatic Analysis; the two are mutually exclusive. Automatic
       # Analysis must be turned off in the SonarCloud project settings
@@ -132,6 +168,7 @@ jobs:
   typecheck:
     name: Type check (mypy)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -140,12 +177,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install ".[dev]"
+      - run: pip install ".[typecheck]"
       - run: mypy app
 
   security:
     name: Security (bandit + pip-audit)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -155,14 +193,20 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install --upgrade "pip>=26.1.2"
-      - run: pip install ".[dev]"
+      - run: pip install ".[security]"
       - run: bandit -r app -ll -c pyproject.toml
-      - run: pip-audit
+      # Scoped to requirements.txt -- the exact hash-pinned runtime lockfile
+      # that Dockerfile installs with --require-hashes -- instead of a bare
+      # `pip-audit`, which would scan whatever happens to be installed in
+      # this job's own environment (bandit, deptry, pip-audit itself, and
+      # their transitive deps) rather than what actually ships in the image.
+      - run: pip-audit -r requirements.txt
       - run: deptry .
 
   dependency-lock:
     name: Verify requirements.txt matches pyproject.toml
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -196,9 +240,31 @@ jobs:
           pip-compile --generate-hashes --allow-unsafe -o requirements.txt pyproject.toml
           git diff --exit-code requirements.txt
 
+  compat:
+    name: Compatibility tests (Python 3.14)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # The Dockerfile's runtime image is python:3.14-slim-bookworm, but
+      # every other job here runs the dev toolchain on 3.12 (this repo's
+      # requires-python floor). Without this job, the actual production
+      # interpreter is never exercised by the test suite -- only used to
+      # regenerate requirements.txt in dependency-lock, which never imports
+      # or runs app code.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install ".[test]"
+      - run: pytest -q
+
   docker:
     name: Docker build and scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       security-events: write
@@ -209,6 +275,49 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t mail-autodiscover:ci .
+
+      # Catches the class of bug that build success + a clean CVE scan both
+      # miss: the image builds, its dependencies are fine, but the container
+      # doesn't actually come up (bad CMD, an env var the app now requires,
+      # a broken entrypoint). Uses the same non-placeholder-rejecting
+      # APP_ENV=development mode documented in AGENTS.md for local dev, since
+      # this is a build-time sanity check, not a production config.
+      - name: Smoke-test the built image
+        run: |
+          set -euo pipefail
+          docker run -d --name smoke -p 18080:8000 \
+            -e APP_ENV=development \
+            -e ALLOWED_DOMAINS=example.com \
+            -e IMAP_HOST=mail.example.com \
+            -e SMTP_HOST=mail.example.com \
+            mail-autodiscover:ci
+
+          ready=false
+          for _ in $(seq 1 20); do
+            if curl -fsS http://localhost:18080/health >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "true" ]; then
+            echo "::error::Container never became healthy" >&2
+            docker logs smoke || true
+            exit 1
+          fi
+
+          curl -fsS http://localhost:18080/health
+          curl -fsS http://localhost:18080/ready
+          curl -fsS "http://localhost:18080/mail/config-v1.1.xml?emailaddress=user@example.com" \
+            | grep -q "<domain>example.com</domain>"
+
+      - name: Show smoke-test container logs
+        if: always()
+        run: docker logs smoke || true
+
+      - name: Stop smoke-test container
+        if: always()
+        run: docker rm -f smoke || true
 
       - name: Scan image for HIGH/CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
