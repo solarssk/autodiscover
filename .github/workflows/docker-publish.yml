@@ -158,11 +158,18 @@ jobs:
           mkdir -p /tmp/digests
           echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}.digest"
 
+      # overwrite: true -- artifacts persist across attempts of the same
+      # run, and upload-artifact fails by default if a same-named one
+      # already exists. Without this, "Re-run all jobs" after either leg
+      # already uploaded here would rebuild and re-scan successfully, only
+      # to fail at this step on the second attempt, blocking the exact
+      # kind of retry this artifact hand-off exists to support.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: digest-${{ matrix.arch }}
           path: /tmp/digests/${{ matrix.arch }}.digest
           retention-days: 1
+          overwrite: true
 
   # Only reached once every matrix leg above (both platforms' gates) passed.
   # Composes the real, user-visible tags (latest, sha-*) directly from the
@@ -452,11 +459,16 @@ jobs:
           format: cyclonedx
           output: sbom-arm64.cdx.json
 
+      # overwrite: true for the same reason as the digest artifacts in
+      # `build` above -- a re-run of this job after the SBOM attach step
+      # below fails shouldn't also fail here just because the SBOM from the
+      # earlier attempt is still sitting in this run's artifact store.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: sbom
           path: sbom-*.cdx.json
           retention-days: 90
+          overwrite: true
 
       # release.yml creates the GitHub Release before dispatching this
       # workflow, so it should already exist -- but poll rather than assume,
