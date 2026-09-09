@@ -112,7 +112,7 @@ Don't rely on domain membership being hidden. If that matters for your deploymen
 | deptry | Unused / missing dependency check | Every push and PR | `.github/workflows/ci.yml` (`security`) |
 | CodeQL | SAST (Python, GitHub Actions) | Every push, every PR, and weekly | `.github/workflows/codeql.yml` |
 | Trivy (pre-merge) | Container image scan; blocks on HIGH/CRITICAL on PRs, advisory SARIF upload only on push to `main` | Every push and PR | `.github/workflows/ci.yml` (`docker`) |
-| Trivy (pre-publish) | Container image scan of the actual image about to be pushed, gates on fixable HIGH/CRITICAL | Push to `main` and version tags | `.github/workflows/docker-publish.yml` |
+| Trivy (pre-publish) | Container image scan of the actual image about to be pushed, gates on fixable HIGH/CRITICAL | Push to `main` only — a version tag promotes that same already-gated digest, it never rebuilds or re-gates | `.github/workflows/docker-publish.yml` |
 | CycloneDX SBOM | Software bill of materials for the published image | Version tags, attached to the GitHub Release | `.github/workflows/docker-publish.yml` |
 | Docker Hub publish | Registry-to-registry copy of the exact, already-scanned GHCR manifest by digest — never a separate build, so the same scan results apply to both registries | Push to `main` and version tags | `.github/workflows/docker-publish.yml` |
 | Dependabot | Dependency and GitHub Actions update PRs | Weekly | `.github/dependabot.yml` |
