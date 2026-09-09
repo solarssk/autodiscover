@@ -65,6 +65,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   (a third tag arriving mid-build would drop a queued release's image and SBOM entirely).
   The precise per-version tag is immune to this by construction, since no two releases
   ever share one.
+- New "Compatibility tests (Python 3.14)" CI job: the Dockerfile ships Python 3.14, but the
+  test suite only ran on the 3.12 floor used elsewhere in CI until now.
+- `ci.yml`'s Docker build job now smoke-tests the built image (`/health`, `/ready`, and the
+  Thunderbird config endpoint) before handing off to Trivy, catching a container that builds
+  and scans clean but never actually starts.
+- `timeout-minutes` set on every CI job, so a hung external dependency (PyPI, SonarCloud,
+  Docker Hub) fails fast instead of blocking up to GitHub's 360-minute default.
+- `.github/workflows/actionlint.yml`, path-filtered to `.github/workflows/**`: catches
+  GitHub-Actions-workflow-specific correctness problems (malformed expressions, misspelled
+  `with:`/`needs:` names) that CodeQL's `actions` language analysis has no queries for.
 
 ### Changed
 
@@ -110,6 +120,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   body-size section, pointing instead at reverse-proxy read timeouts for that.
   Added "Supported versions" and a responsible-disclosure commitment (coordinated
   disclosure, researcher credit) to "Vulnerability disclosure".
+- SonarCloud analysis moved out of the required "Tests and coverage" job into its own,
+  non-required job: the scan alone took ~46s, more than half that job's total wall time,
+  even with `continue-on-error` (which only stops a failure from failing the job, not the
+  time its steps take).
+- `pyproject.toml`'s single `dev` extra split into `test`/`lint`/`typecheck`/`security`
+  extras so each CI job installs only what it runs; `dev` still installs everything for
+  local setup via a self-referencing extra.
+- `pip-audit` (CI and `scripts/check.sh`) now scoped to `-r requirements.txt` — the exact
+  hash-pinned runtime lockfile the Docker image installs — instead of scanning whatever
+  `pip install ".[dev]"` happened to put in the job's own environment.
+- `ruff` pinned to `0.16.6` in the new `lint` extra and bumped to match in
+  `.pre-commit-config.yaml` (was `v0.11.12`, a 5-minor-version gap with no Dependabot
+  coverage to close it).
+- `[tool.pytest.ini_options]`'s blanket `ignore::DeprecationWarning` narrowed to the one
+  specific warning it was actually masking (an `anyio` alias deprecation surfaced via
+  `starlette.testclient`), so an unrelated future `DeprecationWarning` from this repo's own
+  code surfaces instead of disappearing into the same rule.
+- `docker-publish.yml` no longer rebuilds for a version-tag release: a tag push now
+  promotes (re-tags) the digest the corresponding `main` push already built, scanned, and
+  published, instead of building both platforms again from source — the two builds of the
+  same commit were never guaranteed to produce identical digests, since the Dockerfile
+  runs `apt-get upgrade` at build time. `amd64`/`arm64` builds also now run in parallel
+  (matrix) instead of sequentially.
+- `Dockerfile`'s `FROM python:3.14-slim-bookworm` pinned to its current digest, not just
+  the mutable tag.
 
 ### Fixed
 
@@ -121,6 +156,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   (e.g. `:0.3`) in generated release notes — `docker-publish.yml` stopped publishing that tag
   (see the Docker Hub entry above) but this script wasn't updated to match. Now lists the
   precise version tag and `latest` for both GHCR and Docker Hub instead.
+
+### Security
+
+- Rate limiter eviction (`app/security.py`'s `_enforce_rate_limit_capacity`) no longer sorts
+  the entire client store to find the oldest entries once over capacity — a flood of
+  distinct client identities made that sort itself increasingly expensive under the exact
+  load it was meant to defend against. Now an `OrderedDict` with `move_to_end()` on every
+  touch, evicting the front via `popitem(last=False)` — O(1) instead of O(n log n).
+  Benchmarked: 50,000 distinct clients flooding a 10,000-capacity store dropped from ~23s
+  to ~19ms.
 
 ## [0.3.3] - 2026-06-21
 
