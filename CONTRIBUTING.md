@@ -67,13 +67,15 @@ practical benefit.
 | Security (bandit + pip-audit) | Code and dependency security |
 | Docker build and scan | Image build + Trivy scan (blocks HIGH/CRITICAL on PR; advisory SARIF upload on `main`) |
 
-`docker-publish.yml` additionally builds each published platform (`linux/amd64`,
-`linux/arm64`) once, pushes it by digest, and scans and gates that exact digest on
-fixable CRITICAL before the real `latest`/version tags are ever created from it. The
-resulting manifest is published to GHCR, then copied by digest to Docker Hub — never
-rebuilt, so both registries carry the exact same scanned image. A CycloneDX SBOM per
-platform is attached to the GitHub Release on version tags. See
-[SECURITY.md](SECURITY.md#security-controls--ci) for the full control-to-workflow mapping.
+`docker-publish.yml` only ever builds from source on a push to `main`: each platform
+(`linux/amd64`, `linux/arm64`) builds and scans in parallel, gated on fixable HIGH/CRITICAL,
+before the real `latest`/`sha-<short>` tags are created from the two already-scanned
+digests and published to GHCR, then copied by digest to Docker Hub — never rebuilt, so both
+registries carry the exact same scanned image. A version tag never triggers a second build:
+it promotes the digest main already published for that same commit straight to the version
+tag (in both registries), and generates the CycloneDX SBOM attached to the GitHub Release
+from that same digest. See [SECURITY.md](SECURITY.md#security-controls--ci) for the full
+control-to-workflow mapping.
 
 ## Labels
 

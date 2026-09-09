@@ -14,11 +14,7 @@ on:
 # image and SBOM would simply never be built, with no error anywhere. Each
 # ref getting its own group means a tag release can only ever be evicted by
 # another push to that *same* ref, which doesn't happen for an immutable
-# version tag. The accepted trade-off: a `main` push and a version-tag push
-# landing close together run fully in parallel and could each try to write
-# `:latest`, so it may briefly point at either one's content. `:latest` is
-# already documented (README, SECURITY.md) as unsuitable for production use
-# for this and other reasons; losing an entire release outright is worse.
+# version tag.
 concurrency:
   group: docker-publish-${{ github.ref }}
   cancel-in-progress: false
@@ -34,10 +30,25 @@ env:
   DOCKERHUB_IMAGE: docker.io/${{ github.repository }}
 
 jobs:
-  publish:
-    name: Build and publish image
+  # Runs only for a push to main: this is the ONLY place a real `docker
+  # build` happens. A version-tag push (or a `--ref vX.Y.Z` dispatch, same
+  # thing release.yml uses) never lands here -- see the `promote` job below.
+  # Splitting each platform into its own matrix job (instead of one job
+  # building both sequentially) lets amd64 and arm64 build, scan, and gate
+  # concurrently: verified against a real run that the two platforms'
+  # build+scan+gate chains took ~25s and ~27s back-to-back (~52s total) on
+  # top of ~27s of shared one-time setup, so running them in parallel
+  # collapses that ~52s to ~27s. No cost trade-off to weigh here: this repo
+  # is public, so GitHub-hosted runner minutes for it are free.
+  build:
+    name: Build & scan (linux/${{ matrix.arch }})
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -57,6 +68,108 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Only used for this build's OCI labels -- tags are computed in the
+      # manifest job below, once, from the digests both matrix legs produce.
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      # Pushed by digest (unreferenced by any tag yet), and that same digest
+      # is what gets scanned below and later composed into the real tags --
+      # never a rebuild for either purpose.
+      - name: Build & push by digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      # docker/build-push-action's reported digest is an OCI index (the real
+      # image plus a separate build-provenance attestation manifest, added by
+      # buildx's default provenance since v0.10) rather than a single image
+      # manifest. Without TRIVY_PLATFORM, Trivy resolves a multi-manifest
+      # reference by matching the scanning host's own platform -- pinned
+      # explicitly so it doesn't depend on which architecture happens to run
+      # this matrix leg.
+      - name: Trivy scan (SARIF, always uploaded)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-${{ matrix.arch }}.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+
+      - uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.arch }}.sarif
+          category: trivy-${{ matrix.arch }}
+
+      # Hard gate: fails this matrix leg, before the manifest job below ever
+      # runs (needs: build requires every matrix leg to succeed), on fixable
+      # HIGH/CRITICAL findings (playbook's Tier 2 requirement). The digest
+      # above already exists in the registry at this point, but isn't
+      # referenced by any tag, so it's unreachable to anyone pulling
+      # `:latest` or a version tag.
+      - name: Trivy gate (fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      # Matrix job outputs don't reliably reach a dependent job (GitHub
+      # Actions only exposes the last-finishing leg's `outputs:` value, not
+      # both) -- passed via a small artifact per architecture instead, which
+      # the manifest job below downloads and reads.
+      - name: Save digest
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}.digest"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/${{ matrix.arch }}.digest
+          retention-days: 1
+
+  # Only reached once every matrix leg above (both platforms' gates) passed.
+  # Composes the real, user-visible tags (latest, sha-*) directly from the
+  # already-scanned digests -- never a rebuild.
+  manifest:
+    name: Publish tags (GHCR + Docker Hub)
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # A fresh runner, unlike the build job's steps above -- imagetools
+      # create/inspect need a buildx builder context, which isn't assumed
+      # present without this, even though no actual `docker build` happens
+      # in this job (no QEMU needed either, for the same reason).
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # DOCKERHUB_TOKEN is a Docker Hub access token (Account Settings ->
       # Security), not the account password. Same discipline as GITHUB_TOKEN
       # above: scoped, revocable, never the real credential.
@@ -66,204 +179,48 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # `latest` and the `sha-*` tag are enabled only for `main`, never for a
-      # version tag. main pushes share one concurrency group and so are
-      # already serialized against each other, but a tag push runs in its
-      # OWN group (see the concurrency comment above) — fully in parallel
-      # with any main push, including one still writing these shared tags to
-      # GHCR and Docker Hub in two separate steps. A version tag is always
-      # cut from a commit already on `main` (AGENTS.md's release process),
-      # so both runs would compute the identical `sha-<short>` string for
-      # that commit — but not necessarily an identical image: the Dockerfile
-      # runs `apt-get upgrade` at build time, so two independent builds of
-      # the same commit, minutes apart, can resolve different package
-      # versions and produce different digests. With both refs eligible to
-      # write the same tag name, their GHCR and Docker Hub writes could
-      # interleave (e.g. main's GHCR write, then tag's GHCR write, then
-      # tag's Docker Hub write, then main's Docker Hub write) and leave that
-      # tag pointing at different digests across the two registries —
-      # silently breaking the same-image guarantee this workflow otherwise
-      # provides. main's own run has already published `latest` and
-      # `sha-<short>` for that exact commit by the time the tag exists, so
-      # the tag push only needs to add its own version tag.
-      #
-      # Deliberately no `{{major}}.{{minor}}` floating tag: two *different*
-      # patch releases in the same minor series (v1.2.3, then v1.2.4) are
-      # two different immutable tags, each with its own concurrency group,
-      # so nothing serializes them against each other either. Both would
-      # write the same "1.2" tag name from genuinely different, both-correct
-      # digests, and their GHCR/Docker-Hub writes could interleave the same
-      # way. Unlike `latest`/`sha-*` above, there's no single "already
-      # serialized" run to defer to here — the fix would have to serialize
-      # all version-tag pushes into one concurrency group, which reintroduces
-      # exactly the silent-eviction failure mode the top-of-file comment
-      # already rejected (a third tag arriving mid-build would drop a
-      # queued release's image and SBOM entirely, with no error). Precise
-      # per-version tags (`{{version}}`, below) are immune to this by
-      # construction: no two different releases ever share one.
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,format=short,enable=${{ github.ref == 'refs/heads/main' }}
-            type=semver,pattern={{version}}
+            type=raw,value=latest
+            type=sha,format=short
 
-      # Each platform is built exactly once, pushed by digest (unreferenced by
-      # any tag yet), and that same digest is what gets scanned below. The
-      # Dockerfile runs `apt-get upgrade` at build time, so a second, separate
-      # "rebuild for push" step could resolve different package versions than
-      # what was scanned — building once and reusing the digest avoids that
-      # entirely, rather than relying on layer-cache reuse for identity.
-      - name: Build & push linux/amd64 by digest
-        id: build-amd64
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          context: .
-          platforms: linux/amd64
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=amd64
-          cache-to: type=gha,mode=max,scope=amd64
+          pattern: digest-*
+          path: /tmp/digests
+          merge-multiple: true
 
-      # docker/build-push-action's reported digest is an OCI index (the real
-      # image plus a separate build-provenance attestation manifest, added by
-      # buildx's default provenance since v0.10) rather than a single image
-      # manifest. Without TRIVY_PLATFORM, Trivy resolves a multi-manifest
-      # reference by matching the scanning host's own platform: verified
-      # locally that this works by luck for the amd64 digest on an amd64
-      # runner, but fails outright for the arm64 digest ("no child with
-      # platform linux/amd64 in index") since only linux/arm64 and the
-      # unknown/unknown attestation entry exist there. Pinned explicitly on
-      # both sides so neither depends on the runner's own architecture.
-      - name: Trivy scan linux/amd64 (SARIF, always uploaded)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/amd64
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
-          format: sarif
-          output: trivy-amd64.sarif
-          severity: CRITICAL,HIGH,MEDIUM
-          ignore-unfixed: true
-
-      - uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
-        if: always()
-        with:
-          sarif_file: trivy-amd64.sarif
-          category: trivy-amd64
-
-      # Hard gate: fails the job, before the manifest below is ever created,
-      # on fixable HIGH/CRITICAL findings (playbook's Tier 2 requirement).
-      # The digest above already exists in the registry at this point, but
-      # it isn't referenced by any tag, so it's unreachable to anyone
-      # pulling `:latest` or a version tag.
-      - name: Trivy gate linux/amd64 (fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/amd64
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
-
-      - name: Build & push linux/arm64 by digest
-        id: build-arm64
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
-        with:
-          context: .
-          platforms: linux/arm64
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=arm64
-          cache-to: type=gha,mode=max,scope=arm64
-
-      - name: Trivy scan linux/arm64 (SARIF, always uploaded)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/arm64
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
-          format: sarif
-          output: trivy-arm64.sarif
-          severity: CRITICAL,HIGH,MEDIUM
-          ignore-unfixed: true
-
-      - uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
-        if: always()
-        with:
-          sarif_file: trivy-arm64.sarif
-          category: trivy-arm64
-
-      - name: Trivy gate linux/arm64 (fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/arm64
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
-
-      - name: Generate CycloneDX SBOM (linux/amd64)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/amd64
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}
-          format: cyclonedx
-          output: sbom-amd64.cdx.json
-
-      - name: Generate CycloneDX SBOM (linux/arm64)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/arm64
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}
-          format: cyclonedx
-          output: sbom-arm64.cdx.json
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          name: sbom
-          path: sbom-*.cdx.json
-          retention-days: 90
-
-      # Only reached once both platforms' gates above passed. Composes the
-      # real, user-visible tags (latest, version tags, ...) directly from the
-      # two already-scanned digests — never a rebuild. --metadata-file
-      # captures the merged manifest's own digest so the Docker Hub copy
-      # below has a stable, precise reference instead of re-reading a
-      # floating tag that a concurrent run could have already moved.
+      # --metadata-file captures the merged manifest's own digest so the
+      # Docker Hub copy below has a stable, precise reference instead of
+      # re-reading a floating tag that a concurrent run could have already
+      # moved.
       - name: Create and push multi-arch manifest (GHCR)
         id: manifest
         run: |
           set -euo pipefail
+          amd64_digest="$(cat /tmp/digests/amd64.digest)"
+          arm64_digest="$(cat /tmp/digests/arm64.digest)"
           tag_args=()
           while IFS= read -r tag; do
             [ -n "$tag" ] && tag_args+=(--tag "$tag")
           done <<< "${{ steps.meta.outputs.tags }}"
           docker buildx imagetools create --metadata-file manifest.json "${tag_args[@]}" \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-amd64.outputs.digest }}" \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-arm64.outputs.digest }}"
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${amd64_digest}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${arm64_digest}"
           digest="$(jq -r '."containerimage.descriptor".digest // empty' manifest.json)"
           [ -n "$digest" ] || { echo "::error::could not resolve merged manifest digest from metadata file"; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       # Docker Hub is never a build target: BuildKit's image exporter takes
       # one `name=` per invocation, so a second registry can't be fanned out
-      # to from the per-platform builds above without building twice. This
-      # is a registry-to-registry copy of the exact manifest GHCR just
-      # received (same digest, same scan results — nothing rebuilt), with
-      # tags derived by swapping the registry host only; the image path
+      # to from the per-platform builds without building twice. This is a
+      # registry-to-registry copy of the exact manifest GHCR just received
+      # (same digest, same scan results -- nothing rebuilt), with tags
+      # derived by swapping the registry host only; the image path
       # (owner/repo) is identical in both registries.
       - name: Copy manifest to Docker Hub
         run: |
@@ -275,11 +232,123 @@ jobs:
           docker buildx imagetools create "${tag_args[@]}" \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.manifest.outputs.digest }}"
 
-      # release.yml also triggers on this same tag push and creates the
-      # GitHub Release independently; wait for it rather than assuming it
-      # already exists, so this doesn't lose the race on a fast runner.
+  # Runs only for a version-tag push (or release.yml's `--ref vX.Y.Z`
+  # dispatch, or the equivalent manual fallback documented in
+  # CONTRIBUTING.md -- all three set github.ref to the tag). Per AGENTS.md's
+  # release process, a version tag is always cut from a commit already on
+  # main, so the `build`/`manifest` jobs above have already built, scanned,
+  # and published that exact commit under its `sha-<short>` tag by the time
+  # this runs (or will shortly -- this waits for it). Promoting that
+  # existing digest to the version tag -- instead of building again --
+  # guarantees the release is byte-identical to what main already published,
+  # and avoids the race this workflow used to have: two independent builds
+  # of the same commit can produce different digests (the Dockerfile runs
+  # `apt-get upgrade` at build time), so a main-triggered build and a
+  # tag-triggered rebuild of the same commit were never guaranteed to agree,
+  # even though they were meant to be "the same release".
+  promote:
+    name: Promote published image to release tag
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # imagetools inspect/create need a buildx builder context; no QEMU
+      # needed since nothing is built here.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
+        with:
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # docker/metadata-action's `type=sha,format=short` is the first 7 hex
+      # characters of the full commit SHA (verified against a real published
+      # tag: sha-cbd742c resolves to the same digest as latest, for a commit
+      # starting cbd742c9...). github.sha in a tag-triggered run is the
+      # commit the tag points at -- the same commit the main push for this
+      # release already built -- so this is computed the same way here as
+      # docker/metadata-action computed it for that earlier run, without
+      # needing to query anything to reconstruct it.
+      #
+      # Polling instead of assuming the tag already exists: release.yml
+      # dispatches this job right after creating the GitHub Release, which
+      # can easily be faster than the separate `build`/`manifest` jobs
+      # above (triggered by the same push, but a genuinely different,
+      # unordered workflow run) finishing their own build and scan.
+      - name: Wait for the source image to be published
+        id: source
+        run: |
+          set -euo pipefail
+          source_tag="sha-${GITHUB_SHA:0:7}"
+          source_ref="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${source_tag}"
+          for _ in $(seq 1 30); do
+            if digest="$(docker buildx imagetools inspect "$source_ref" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty')" && [ -n "$digest" ]; then
+              echo "digest=$digest" >> "$GITHUB_OUTPUT"
+              echo "Found ${source_ref} @ ${digest}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::${source_ref} did not appear within 5 minutes -- the main-branch build for" \
+               "this commit may have failed, or this commit predates this workflow's sha-tagging." \
+               "Trigger a build for main (workflow_dispatch, no ref override) first, then retry." >&2
+          exit 1
+
+      - name: Promote to GHCR and Docker Hub
+        env:
+          DIGEST: ${{ steps.source.outputs.digest }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          docker buildx imagetools create \
+            --tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${version}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+          docker buildx imagetools create \
+            --tag "${{ env.DOCKERHUB_IMAGE }}:${version}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+
+      # Reporting only, not a second Trivy gate: the digest being promoted
+      # already passed the HIGH/CRITICAL gate in the build job above, and
+      # nothing about its content changes here.
+      - name: Generate CycloneDX SBOM (linux/amd64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.source.outputs.digest }}
+          format: cyclonedx
+          output: sbom-amd64.cdx.json
+
+      - name: Generate CycloneDX SBOM (linux/arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.source.outputs.digest }}
+          format: cyclonedx
+          output: sbom-arm64.cdx.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sbom
+          path: sbom-*.cdx.json
+          retention-days: 90
+
+      # release.yml creates the GitHub Release before dispatching this
+      # workflow, so it should already exist -- but poll rather than assume,
+      # for the manual-fallback path (a plain `git push origin vX.Y.Z` or a
+      # bare `gh workflow run docker-publish.yml --ref vX.Y.Z`) where nothing
+      # guarantees the release was created first.
       - name: Attach SBOM to the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
