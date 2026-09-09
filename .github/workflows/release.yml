@@ -162,16 +162,30 @@ jobs:
 
       # --target pins the new tag to the exact commit this run checked out
       # and verified above -- not main's current tip, which could have moved
-      # if another push landed while this run was in flight. Idempotent ONLY
-      # for a genuine retry of this same commit (checked via the API, not
-      # just "a release with this tag name exists" -- a version number
-      # accidentally reused or rolled back to could already have a release
-      # from a much earlier, unrelated commit, and silently treating that as
-      # "already done" would go on to dispatch docker-publish.yml and close
-      # a milestone against the wrong content entirely): if a prior run for
-      # this exact commit already created the release and only a later step
-      # failed, this logs and moves on so the steps below still run; if the
-      # tag exists but points elsewhere, this fails loudly instead.
+      # if another push landed while this run was in flight. It only takes
+      # effect when `gh release create` creates the tag itself, though: per
+      # `gh release create --help`, if a tag with this name already exists
+      # anywhere in the repo, --target is silently ignored and the release
+      # is attached to that existing tag wherever it points -- so an
+      # orphaned tag (a leftover manual push, or a previous run that tagged
+      # but never finished publishing) could get a release created for the
+      # wrong commit without this ever calling `gh release create` unsafely.
+      # Resolving the tag via the commits API up front (works whether a
+      # Release exists for it or not, unlike `gh release view`) and
+      # rejecting a mismatch before ever calling `gh release create` closes
+      # that gap. A version number accidentally reused or rolled back to
+      # could hit either the tag-exists or release-exists case, and silently
+      # treating either as "already done" would go on to dispatch
+      # docker-publish.yml and close a milestone against the wrong content
+      # entirely.
+      #
+      # If the tag already exists and matches, only actually skip creation
+      # when a Release also already exists for it -- a genuine retry of this
+      # exact commit after a prior run created the release but a later step
+      # failed. If the tag matches but has no Release yet (the orphaned-tag
+      # case above, but pointing at the right commit), fall through to `gh
+      # release create`, which will safely attach a Release to that
+      # already-correct tag instead of trying to move it.
       #
       # No --latest here even for a stable version: per-commit concurrency
       # groups mean two different stable-version pushes can run fully in
@@ -189,16 +203,17 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.bump.outputs.tag }}"
-          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            EXISTING_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha' 2>/dev/null || true)"
-            if [ "$EXISTING_SHA" = "${{ github.sha }}" ]; then
-              echo "Release $TAG already exists and points at this same commit -- skipping creation, continuing to the steps below."
-              exit 0
-            fi
-            echo "::error::Release $TAG already exists but resolves to a different commit" \
-                 "(${EXISTING_SHA:-unknown}, not ${{ github.sha }}). This looks like a reused or" \
-                 "rolled-back version number in pyproject.toml -- refusing to publish under it." >&2
+          EXISTING_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$EXISTING_SHA" ] && [ "$EXISTING_SHA" != "${{ github.sha }}" ]; then
+            echo "::error::Tag $TAG already exists but resolves to a different commit" \
+                 "(${EXISTING_SHA}, not ${{ github.sha }}). This looks like a reused or" \
+                 "rolled-back version number in pyproject.toml, or an orphaned tag left over" \
+                 "from an earlier manual push or failed release -- refusing to publish under it." >&2
             exit 1
+          fi
+          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists and points at this same commit -- skipping creation, continuing to the steps below."
+            exit 0
           fi
           args=(
             --repo "${GITHUB_REPOSITORY}"
