@@ -62,7 +62,9 @@ practical benefit.
 | Secret scan (gitleaks) | Scans this run's own commit range for leaked secrets |
 | Documentation impact declaration | Verifies the PR's "Documentation impact" checkbox against the actual diff (skipped for Dependabot PRs) |
 | Lint (ruff) | Python style and lint |
-| Tests and coverage | `pytest` with ≥90% coverage on `app/`; also uploads to Codecov and runs a SonarCloud scan (both report-only, not merge gates yet) |
+| Tests and coverage | `pytest` with ≥90% coverage on `app/`; also uploads to Codecov (report-only, not a merge gate) |
+| Compatibility tests (Python 3.14) | Re-runs the suite on the Dockerfile's actual runtime Python version, not just the 3.12 floor used elsewhere |
+| SonarCloud analysis | Separate, non-required job — kept off the required "Tests and coverage" path since a SonarCloud scan alone took ~46s, longer than pytest itself |
 | Type check (mypy) | Static typing on `app/` |
 | Security (bandit + pip-audit) | Code and dependency security |
 | Docker build and scan | Image build + Trivy scan (blocks HIGH/CRITICAL on PR; advisory SARIF upload on `main`) |
