@@ -69,7 +69,15 @@ warn_unused_configs = true
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=90"
-filterwarnings = ["ignore::DeprecationWarning"]
+# Narrowly scoped, not a blanket "ignore::DeprecationWarning": that used to
+# silence any DeprecationWarning repo-wide, including ones from our own code.
+# The only DeprecationWarning currently raised in this suite comes from
+# starlette.testclient importing the deprecated `anyio.abc.BlockingPortal`
+# alias (starlette/testclient.py:53) -- a third-party issue, fixed upstream
+# once Starlette updates the import, not something this repo can act on.
+filterwarnings = [
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
 
 [tool.coverage.run]
 branch = true
