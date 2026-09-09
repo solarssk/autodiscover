@@ -54,8 +54,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # matrix.arch is part of the key: without it, both matrix legs for the
+    # same commit resolve to the identical group name, so GitHub Actions
+    # only ever runs one of them at a time -- silently defeating the whole
+    # point of matrixing amd64/arm64 into parallel legs in the first place,
+    # and a retry of one arch could evict the other arch's still-pending
+    # leg from the same run.
     concurrency:
-      group: docker-publish-build-${{ github.sha }}
+      group: docker-publish-build-${{ github.sha }}-${{ matrix.arch }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
@@ -394,12 +400,20 @@ jobs:
           fi
           echo "Verified: ${DIGEST} was built from ${GITHUB_SHA}."
 
+      # GITHUB_REF_NAME for a tag push is the tag itself, "vX.Y.Z" -- the
+      # published container tag has always been the bare "X.Y.Z" (see
+      # scripts/format_release_notes.py's parse_version(), and
+      # docker-compose.ghcr.yml's IMAGE_TAG default), matching what
+      # docker/metadata-action's `type=semver,pattern={{version}}` used to
+      # produce before this job stopped using metadata-action. Publishing
+      # "vX.Y.Z" here instead would silently mismatch every generated
+      # release note and compose file default.
       - name: Promote to GHCR and Docker Hub
         env:
           DIGEST: ${{ steps.source.outputs.digest }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME}"
+          version="${GITHUB_REF_NAME#v}"
           docker buildx imagetools create \
             --tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${version}" \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
