@@ -6,6 +6,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-09
+
+### What's new
+
+- Images are now also published to **Docker Hub** (`docker.io/solarssk/mail-autodiscover`),
+  alongside GHCR, always byte-identical.
+- Releases are now fully automated — merging the version-bump PR is the only manual step.
+- The full solarssk Tier 2 engineering standard is now enforced and documented: mechanical
+  playbook compliance checks, a CycloneDX SBOM per release, and a rewritten `SECURITY.md`
+  that names concrete risks and their mitigations instead of a flat feature list.
+- CI is significantly faster and catches more: SonarCloud no longer blocks required checks,
+  the test suite now also runs on the exact Python version the container ships, and the
+  built Docker image is smoke-tested before it ever reaches a registry.
+- Fixed a rate-limiter correctness bug: under bursty traffic, an already-throttled client
+  could occasionally slip through a request early.
+
+### What this means
+
+- Pull from Docker Hub instead of GHCR if you prefer — see `docker-compose.dockerhub.yml`.
+  Both registries always carry the exact same, already-scanned image and digest.
+- A new version tag is promoted directly from the exact image `main` already built and
+  scanned for that commit — never rebuilt — so a release is guaranteed to be byte-identical
+  to what was already tested and published.
+- Rate limiting under heavy, bursty traffic is now strictly correct; normal traffic is
+  unaffected.
+
+### Action required
+
+- No action required. If you want to switch to Docker Hub, see the updated
+  `docker-compose.dockerhub.yml` — otherwise nothing changes.
+
 ### Added
 
 - `release.yml` now runs on every push to `main` and automates the whole release: if the push
@@ -476,7 +507,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - Branch protection and repository labels
 - MIT license
 
-[Unreleased]: https://github.com/solarssk/mail-autodiscover/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/solarssk/mail-autodiscover/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/solarssk/mail-autodiscover/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/solarssk/mail-autodiscover/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/solarssk/mail-autodiscover/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/solarssk/mail-autodiscover/compare/v0.3.0...v0.3.1
