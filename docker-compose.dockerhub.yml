@@ -1,16 +1,12 @@
 # Example stack for Portainer / Docker Compose using the pre-built Docker Hub image.
 # Values below are interpolated from .env or from your Portainer environment settings.
 # Copy .env.example to .env and set TRUSTED_PROXY_IPS for your proxy/Docker CIDRs.
-# IMAGE_TAG defaults to `latest` for now: Docker Hub publishing only started with this
-# same change, so no version tag has been published there yet (only `latest` and
-# `sha-<short>` come from a main push; semver tags only come from a version-tag push,
-# and the next one cut will be the first published to Docker Hub at all). Once that
-# happens, pin IMAGE_TAG to it here, matching docker-compose.ghcr.yml's practice of
-# defaulting to a real released version rather than `latest`.
+# IMAGE_TAG defaults to the current release tag, matching docker-compose.ghcr.yml's
+# practice. Override in .env or Portainer if needed.
 
 services:
   mail-autodiscover:
-    image: docker.io/solarssk/mail-autodiscover:${IMAGE_TAG:-latest}
+    image: docker.io/solarssk/mail-autodiscover:${IMAGE_TAG:-0.4.0}
     container_name: ${CONTAINER_NAME:-mail-autodiscover}
     restart: unless-stopped
     ports:
