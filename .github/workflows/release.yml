@@ -65,16 +65,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Deliberately does NOT skip just because `gh release view` finds the
-      # tag already exists: a rerun after `gh release create` below
-      # succeeded but a later step (container-publish dispatch, milestone
-      # close) failed transiently must still retry those steps, not skip
-      # them. That check lives in the "Create GitHub Release and tag" step
-      # instead, scoped to only the one step it makes idempotent.
+      # Deliberately never gates on whether `gh release view` finds the tag
+      # already exists: that check lives only in the "Create GitHub Release
+      # and tag" step, scoped to make just that one step idempotent. Gating
+      # here on release-existence would make a retry of *this exact push*
+      # (after release creation succeeded but a later step failed) report
+      # skip=true once the release exists and never retry the steps after
+      # it -- the crash-only-recovery equivalent of checking a job's own
+      # past success to decide whether to redo it.
       - name: Detect version bump
         id: bump
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           NEW="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
@@ -85,32 +85,45 @@ jobs:
           TAG="v${NEW}"
 
           BEFORE="${{ github.event.before }}"
+          HAVE_BEFORE=false
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            HAVE_BEFORE=true
+          fi
+
           OLD=""
-          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
-             && git cat-file -e "${BEFORE}:pyproject.toml" 2>/dev/null; then
+          if [ "$HAVE_BEFORE" = "true" ] && git cat-file -e "${BEFORE}:pyproject.toml" 2>/dev/null; then
             OLD="$(git show "${BEFORE}:pyproject.toml" \
               | python3 -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["project"]["version"])' \
               2>/dev/null || true)"
           fi
 
+          HEADING_RE="^## \[${NEW//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}"
           CHANGELOG_OK=false
-          if grep -qE "^## \[${NEW//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
-            CHANGELOG_OK=true
+          grep -qE "$HEADING_RE" CHANGELOG.md && CHANGELOG_OK=true
+
+          # Was the heading *already* present before this push? Only needed
+          # when NEW didn't change (checked below) -- comparing against the
+          # committed CHANGELOG.md at BEFORE, not the current one.
+          CHANGELOG_OK_BEFORE=false
+          if [ "$HAVE_BEFORE" = "true" ] && git cat-file -e "${BEFORE}:CHANGELOG.md" 2>/dev/null; then
+            git show "${BEFORE}:CHANGELOG.md" | grep -qE "$HEADING_RE" && CHANGELOG_OK_BEFORE=true
           fi
 
-          ALREADY_RELEASED=false
-          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            ALREADY_RELEASED=true
-          fi
-
-          # Attempt if this push actually moved the version (the ordinary,
-          # fresh-release case) -- or if the version is unchanged but still
-          # unreleased and now has a valid heading (the fix-and-push-again
-          # recovery path described above).
+          # Attempt if this exact push moved the version (the ordinary,
+          # fresh-release case) -- or if the version is unchanged but *this
+          # push* is specifically the one that just added the matching
+          # heading (recovering from an earlier push that bumped the
+          # version without one, per the warning below). Deliberately not
+          # "heading exists now, whatever pushed it there": every push
+          # after the real fix also sees an unchanged version and an
+          # already-valid heading, and treating all of those as attempts
+          # too would let an unrelated later push race the actual fix
+          # commit's own run to create the release -- whichever wins
+          # decides which commit the tag (and its --target) points to.
           ATTEMPT=false
           if [ "$NEW" != "$OLD" ]; then
             ATTEMPT=true
-          elif [ "$ALREADY_RELEASED" = "false" ] && [ "$CHANGELOG_OK" = "true" ]; then
+          elif [ "$CHANGELOG_OK" = "true" ] && [ "$CHANGELOG_OK_BEFORE" = "false" ]; then
             ATTEMPT=true
           fi
 
