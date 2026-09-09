@@ -195,12 +195,17 @@ def is_rate_limited(client_ip: str, settings: Settings) -> bool:
         _cleanup_rate_limit_store(now, settings)
         timestamps = [t for t in _rate_limit_store.get(client_ip, []) if now - t < window]
         _rate_limit_store[client_ip] = timestamps
-        # Move to the end regardless of outcome: this client was just active,
-        # so it must not be the next one evicted as "least recently touched".
-        _rate_limit_store.move_to_end(client_ip)
         if len(timestamps) >= limit:
             return True
         timestamps.append(now)
+        # Move to the end only for an accepted request: this must track the
+        # same "most recent request" recency the old timestamp-sort used
+        # (item[1][-1], which only ever advanced on an appended timestamp),
+        # not "most recently touched at all". Moving on a rejection too
+        # would let a client already over its limit shield itself from
+        # eviction by repeatedly getting rejected, while bumping a
+        # different, still-within-window client's entry out from under it.
+        _rate_limit_store.move_to_end(client_ip)
         _enforce_rate_limit_capacity(settings)
     return False
 

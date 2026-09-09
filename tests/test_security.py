@@ -207,6 +207,38 @@ def test_rate_limit_evicts_oldest_clients_when_over_capacity() -> None:
     assert "203.0.113.1" not in _rate_limit_store
 
 
+def test_rate_limit_rejected_request_does_not_shield_from_eviction() -> None:
+    """A rejected (already-over-limit) request must not move its client to
+    the "most recently touched" end -- only an accepted request that
+    actually extends the client's tracked window should. Otherwise a client
+    already over its limit could keep re-touching the store (getting
+    rejected each time) to stay evict-proof, bumping a different,
+    genuinely-still-within-window client out instead."""
+    reset_rate_limit_store()
+    settings = make_settings(
+        rate_limit_enabled=True,
+        rate_limit_per_minute=1,
+        rate_limit_max_clients=2,
+        rate_limit_cleanup_interval_seconds=9999,
+    )
+
+    assert is_rate_limited("A", settings) is False
+    assert is_rate_limited("B", settings) is False
+    # A is already over its 1-per-minute limit -- rejected, must not reorder.
+    assert is_rate_limited("A", settings) is True
+    assert list(_rate_limit_store.keys()) == ["A", "B"]
+
+    # C pushes the store over capacity; A (untouched by the rejection above)
+    # is still the least-recently-touched and must be the one evicted.
+    assert is_rate_limited("C", settings) is False
+    assert "A" not in _rate_limit_store
+    assert "B" in _rate_limit_store
+
+    # B is still within its own 1-per-minute window and must still be
+    # rejected -- not silently reset by having been evicted early.
+    assert is_rate_limited("B", settings) is True
+
+
 def test_rate_limit_eviction_keeps_most_recently_touched_clients() -> None:
     """A flood of far more distinct clients than capacity must still cap the
     store at max_clients and keep exactly the most-recently-touched ones,
